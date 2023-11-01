@@ -1,97 +1,102 @@
 import cv2 as cv
 import numpy as np
-import json
 
 
-def load_calibration_data(json_file):
-    with open(json_file, "r") as f:
-        loaded_data = json.load(f)
+def order_points(pts):
+    # Initialize an array to hold the ordered coordinates of the points
+    # The order is determined as follows: [top-left, top-right, bottom-right, bottom-left]
+    rect = np.zeros((4, 2), dtype="float32")
 
-    camera_matrix = np.array(loaded_data["camera_matrix"])
-    distortion_coefficients = np.array(loaded_data["distortion_coefficients"])
+    # Sum the coordinates of each point; the smallest sum will be the top-left point,
+    # and the largest sum will be the bottom-right point.
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]
+    rect[2] = pts[np.argmax(s)]
 
-    return camera_matrix, distortion_coefficients
+    # Compute the difference between the coordinates of each point;
+    # the smallest difference will be the top-right point,
+    # and the largest difference will be the bottom-left point.
+    diff = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(diff)]
+    rect[3] = pts[np.argmax(diff)]
+
+    # Return the ordered coordinates
+    return rect
 
 
 def main():
-    # Initialize the webcam
+    # Load a predefined dictionary for ArUco marker detection
+    dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_50)
+    # Create an instance of DetectorParameters for configuring ArUco detection
+    parameters = cv.aruco.DetectorParameters()
+    # Create an ArucoDetector object with the predefined dictionary and custom parameters
+    detector = cv.aruco.ArucoDetector(dictionary, parameters)
+
+    # Initialize the video capture object to capture video from the default camera (camera 0)
     cap = cv.VideoCapture(0)
 
-    # Load camera calibration data
-    camera_matrix, distortion_coefficients = load_calibration_data(
-        "camera_calibration.json"
-    )
-
-    # Chessboard settings
-    pattern_size = (9, 6)
-    square_size = 1.0  # Set this to your actual square size
-
-    # Prepare object points
-    objp = np.zeros((np.prod(pattern_size), 3), dtype=np.float32)
-    objp[:, :2] = np.indices(pattern_size).T.reshape(-1, 2)
-    objp *= square_size
-
-    frame_warp = None
-
     while True:
-        # Capture frame-by-frame
+        # Capture a frame from the camera
         ret, frame = cap.read()
+        # Check if the frame was successfully captured
         if not ret:
             print("Failed to grab frame")
+            break  # Exit the loop if frame capture failed
+
+        # Detect ArUco markers in the frame
+        markerCorners, markerIds, rejectedCandidates = detector.detectMarkers(frame)
+
+        # Check if any ArUco markers were detected
+        if markerIds is not None:
+            # Draw the boundaries of the detected ArUco markers on the frame
+            cv.aruco.drawDetectedMarkers(frame, markerCorners, markerIds)
+
+            # Proceed if exactly four ArUco markers are detected
+            if len(markerCorners) == 4:
+                # Calculate the center of each ArUco marker
+                centers = np.array([np.mean(crn[0], axis=0) for crn in markerCorners])
+
+                # Order the center points of the ArUco markers
+                sorted_corners = order_points(centers)
+
+                # Define the dimensions of the paper in pixels
+                paper_width = 1500
+                paper_height = 800
+                # Define the coordinates of the corners of the paper in the output image
+                output_pts = np.array(
+                    [
+                        [0, 0],
+                        [paper_width - 1, 0],
+                        [paper_width - 1, paper_height - 1],
+                        [0, paper_height - 1],
+                    ],
+                    dtype="float32",
+                )
+
+                # Compute the perspective transform matrix to transform the perspective
+                # of the captured frame to match the dimensions of the paper
+                M = cv.getPerspectiveTransform(sorted_corners, output_pts)
+
+                # Apply the perspective transformation to the captured frame
+                warped = cv.warpPerspective(frame, M, (paper_width, paper_height))
+
+                # Display the result of the perspective transformation
+                cv.imshow("Perspective Transform", warped)
+
+        # Display the original frame with the detected ArUco markers
+        cv.imshow("Frame", frame)
+
+        # Wait for a key press for 1 millisecond; exit if 'Esc' is pressed
+        key = cv.waitKey(1)
+        if key == 27:
             break
 
-        # Convert to grayscale
-        gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
-
-        # Find the chessboard corners
-        ret, corners = cv.findChessboardCorners(gray, pattern_size)
-
-        if ret:
-            # Refine the corner positions
-            corners_subpix = cv.cornerSubPix(
-                gray,
-                corners,
-                (11, 11),
-                (-1, -1),
-                (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 30, 0.001),
-            )
-
-            # Draw the corners
-            cv.drawChessboardCorners(frame, pattern_size, corners_subpix, ret)
-
-            # Get the new camera matrix based on the free scaling parameter
-            newcameramtx, roi = cv.getOptimalNewCameraMatrix(
-                camera_matrix,
-                distortion_coefficients,
-                gray.shape[::-1],
-                1,
-                gray.shape[::-1],
-            )
-
-            # Compute the homography matrix
-            H, _ = cv.findHomography(
-                corners_subpix,
-                cv.perspectiveTransform(objp[:, :2].reshape(-1, 1, 2), newcameramtx),
-            )
-
-            # Apply the perspective transformation
-            h, w = frame.shape[:2]
-            frame_warp = cv.warpPerspective(frame, H, (w, h))
-        else:
-            frame_warp = np.zeros_like(frame)
-
-        # Combine original and warped images for display
-        combined_frame = np.hstack((frame, frame_warp))
-        cv.imshow("Original (left) vs Perspective Corrected (right)", combined_frame)
-
-        key = cv.waitKey(50)
-        if key == 27:  # ESC key to break
-            break
-
-    # When everything done, release the capture
+    # Release the video capture object to free resources
     cap.release()
+    # Destroy all OpenCV-created windows to free resources
     cv.destroyAllWindows()
 
 
+# Execute the main function when this script is run
 if __name__ == "__main__":
     main()
