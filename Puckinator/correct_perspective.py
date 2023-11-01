@@ -1,3 +1,4 @@
+import itertools
 import cv2 as cv
 import numpy as np
 
@@ -48,16 +49,28 @@ def main():
 
         # Check if any ArUco markers were detected
         if markerIds is not None:
+            detectedMarkers = list(zip(markerCorners, markerIds))
             # Draw the boundaries of the detected ArUco markers on the frame
             cv.aruco.drawDetectedMarkers(frame, markerCorners, markerIds)
 
             # Proceed if exactly four ArUco markers are detected
             if len(markerCorners) == 4:
-                # Calculate the center of each ArUco marker
-                centers = np.array([np.mean(crn[0], axis=0) for crn in markerCorners])
+                sorted_markers = list(
+                    zip(*sorted(detectedMarkers, key=lambda marker: marker[1]))
+                )[0]
+
+                print(f"Sorted markers:\n{sorted_markers}")
+
+                desired_corners = np.array(
+                    [marker[0][0] for marker in sorted_markers]
+                )  # Extracting the first corner of each marker
+
+                print(
+                    f"Desired corners (has shape {desired_corners.shape}):\n{desired_corners}"
+                )
 
                 # Order the center points of the ArUco markers
-                sorted_corners = order_points(centers)
+                # sorted_corners = order_points(desired_corners)
 
                 # Define the dimensions of the paper in pixels
                 paper_width = 1500
@@ -75,7 +88,7 @@ def main():
 
                 # Compute the perspective transform matrix to transform the perspective
                 # of the captured frame to match the dimensions of the paper
-                M = cv.getPerspectiveTransform(sorted_corners, output_pts)
+                M = cv.getPerspectiveTransform(desired_corners, output_pts)
 
                 # Apply the perspective transformation to the captured frame
                 warped = cv.warpPerspective(frame, M, (paper_width, paper_height))
