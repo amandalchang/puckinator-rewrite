@@ -1,6 +1,10 @@
-import itertools
 import cv2 as cv
 import numpy as np
+
+# Constants
+CALIB_FRAME = 0  # Number of frames grabbed
+table_width = 2200
+table_height = 800
 
 
 def order_points(pts):
@@ -36,6 +40,9 @@ def main():
     # Initialize the video capture object to capture video from the default camera (camera 0)
     cap = cv.VideoCapture(0)
 
+    # Initialize the number of frames
+    num_frames = 0
+
     while True:
         # Capture a frame from the camera
         ret, frame = cap.read()
@@ -49,52 +56,55 @@ def main():
 
         # Check if any ArUco markers were detected
         if markerIds is not None:
-            detectedMarkers = list(zip(markerCorners, markerIds))
             # Draw the boundaries of the detected ArUco markers on the frame
             cv.aruco.drawDetectedMarkers(frame, markerCorners, markerIds)
 
             # Proceed if exactly four ArUco markers are detected
-            if len(markerCorners) == 4:
-                sorted_markers = list(
-                    zip(*sorted(detectedMarkers, key=lambda marker: marker[1]))
-                )[0]
+            if num_frames <= CALIB_FRAME:
+                if len(markerCorners) == 4:
 
-                print(f"Sorted markers:\n{sorted_markers}")
+                    # Calculate the center of each ArUco marker
+                    centers = np.array(
+                        [np.mean(crn[0], axis=0) for crn in markerCorners]
+                    )
 
-                desired_corners = np.array(
-                    [marker[0][0] for marker in sorted_markers]
-                )  # Extracting the first corner of each marker
+                    # Order the center points of the ArUco markers
+                    sorted_corners = order_points(centers)
 
-                print(
-                    f"Desired corners (has shape {desired_corners.shape}):\n{desired_corners}"
-                )
+                    # Define the coordinates of the corners of the paper in the output image
+                    output_pts = np.array(
+                        [
+                            [0, 0],
+                            [table_width - 1, 0],
+                            [table_width - 1, table_height - 1],
+                            [0, table_height - 1],
+                        ],
+                        dtype="float32",
+                    )
 
-                # Order the center points of the ArUco markers
-                # sorted_corners = order_points(desired_corners)
+                    # Compute the perspective transform matrix to transform the perspective
+                    # of the captured frame to match the dimensions of the paper
+                    M = cv.getPerspectiveTransform(sorted_corners, output_pts)
 
-                # Define the dimensions of the paper in pixels
-                paper_width = 1500
-                paper_height = 800
-                # Define the coordinates of the corners of the paper in the output image
-                output_pts = np.array(
-                    [
-                        [0, 0],
-                        [paper_width - 1, 0],
-                        [paper_width - 1, paper_height - 1],
-                        [0, paper_height - 1],
-                    ],
-                    dtype="float32",
-                )
+                    if num_frames == CALIB_FRAME:
+                        calibrated_m = M
+                        print("frame 10")
+                    # Apply the perspective transformation to the captured frame
+                    warped = cv.warpPerspective(frame, M, (table_width, table_height))
 
-                # Compute the perspective transform matrix to transform the perspective
-                # of the captured frame to match the dimensions of the paper
-                M = cv.getPerspectiveTransform(desired_corners, output_pts)
+                    # Display the result of the perspective transformation
+                    cv.imshow("Perspective Transform", warped)
 
-                # Apply the perspective transformation to the captured frame
-                warped = cv.warpPerspective(frame, M, (paper_width, paper_height))
+                    num_frames = num_frames + 1
+        if num_frames > CALIB_FRAME:
+            print("I found my calibration")
+            # Apply the perspective transformation to the captured frame
+            warped = cv.warpPerspective(
+                frame, calibrated_m, (table_width, table_height)
+            )
 
-                # Display the result of the perspective transformation
-                cv.imshow("Perspective Transform", warped)
+            # Display the result of the perspective transformation
+            cv.imshow("Perspective Transform", warped)
 
         # Display the original frame with the detected ArUco markers
         cv.imshow("Frame", frame)
