@@ -1,6 +1,7 @@
-import itertools
 import cv2 as cv
 import numpy as np
+import serial
+
 
 # Constants
 CALIB_FRAME = 10  # Number of frames grabbed
@@ -95,11 +96,11 @@ class PuckDetector:
             # Search for the target marker
             for corners, id in detectedMarkers:
                 if id == 4:
-                    print(f"Corners list for id 4:\n{corners}")
+                    # print(f"Corners list for id 4:\n{corners}")
                     x_avg = np.mean([corner[0] for corner in corners[0]])
                     y_avg = np.mean([corner[1] for corner in corners[0]])
                     center = (x_avg, y_avg)
-                    print(f"calculated center: {center}")
+                    # print(f"calculated center: {center}")
         return (frame, center)
 
 
@@ -109,6 +110,9 @@ def main():
     corrector = PerspectiveCorrector(3925, 1875)
     detector = PuckDetector()
 
+    arduino = serial.Serial(
+        port="/dev/tty.usbmodem2101", baudrate=115200, timeout=0.1, write_timeout=0
+    )
     # Initialize the number of frames
     num_frames = 0
 
@@ -131,8 +135,16 @@ def main():
                     # print("detect result is not none")
                     if detected_frame is not None:
                         # print("showing perspective corrected frame")
+
                         cv.imshow("Perspective Transform", detected_frame)
-                        print(center)
+                        if center is not None:
+                            print(center)
+
+                            x_in = (float(center[1]) / 100) - 9.375
+
+                            arduino.write(bytes(str(x_in), "utf-8"))
+                            print(f"{str(x_in)} written to serial port")
+
             num_frames = num_frames + 1
 
         # Display the original frame with the detected ArUco markers
@@ -145,6 +157,7 @@ def main():
         if key == ord("c"):
             corrector.calibrate(frame)
 
+    serial_thread.stop()
     # Release the video capture object to free resources
     cap.release()
     # Destroy all OpenCV-created windows to free resources
