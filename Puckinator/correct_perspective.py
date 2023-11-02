@@ -72,10 +72,42 @@ class PerspectiveCorrector:
             return None
 
 
+class PuckDetector:
+    def __init__(self) -> None:
+        # Load a predefined dictionary for ArUco marker detection
+        self.dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_50)
+        # Create an instance of DetectorParameters for configuring ArUco detection
+        self.parameters = cv.aruco.DetectorParameters()
+        # Create an ArucoDetector object with the predefined dictionary and custom parameters
+        self.detector = cv.aruco.ArucoDetector(self.dictionary, self.parameters)
+
+    def detect_puck(self, frame):
+        markerCorners, markerIds, _ = self.detector.detectMarkers(frame)
+        # print("detect puck called")
+        # Check if any ArUco markers were detected
+        center = None
+        if markerIds is not None:
+            # print("marker IDs present")
+            detectedMarkers = list(zip(markerCorners, markerIds))
+            # Draw the boundaries of the detected ArUco markers on the frame
+            cv.aruco.drawDetectedMarkers(frame, markerCorners, markerIds)
+            # print(detectedMarkers)
+            # Search for the target marker
+            for corners, id in detectedMarkers:
+                if id == 4:
+                    print(f"Corners list for id 4:\n{corners}")
+                    x_avg = np.mean([corner[0] for corner in corners[0]])
+                    y_avg = np.mean([corner[1] for corner in corners[0]])
+                    center = (x_avg, y_avg)
+                    print(f"calculated center: {center}")
+        return (frame, center)
+
+
 def main():
     # Initialize the video capture object to capture video from the default camera (camera 0)
     cap = cv.VideoCapture(0)
     corrector = PerspectiveCorrector(3925, 1875)
+    detector = PuckDetector()
 
     # Initialize the number of frames
     num_frames = 0
@@ -92,7 +124,15 @@ def main():
             corrected_frame = corrector.correct_frame(frame)
             if corrected_frame is not None:
                 # Display the result of the perspective transformation
-                cv.imshow("Perspective Transform", corrected_frame)
+                # print("corrected frame is not none")
+                detect_result = detector.detect_puck(corrected_frame)
+                if detect_result is not None:
+                    detected_frame, center = detect_result
+                    # print("detect result is not none")
+                    if detected_frame is not None:
+                        # print("showing perspective corrected frame")
+                        cv.imshow("Perspective Transform", detected_frame)
+                        print(center)
             num_frames = num_frames + 1
 
         # Display the original frame with the detected ArUco markers
