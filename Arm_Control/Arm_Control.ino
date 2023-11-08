@@ -1,4 +1,4 @@
-// Arm control 
+// Arm control
 
 #include <FlexyStepper.h>
 
@@ -7,9 +7,9 @@ const int MOTOR_DIRECTION_PIN = 3;
 
 FlexyStepper stepper;
 
-double x_coord = 0.0; 
-double theta = 0; 
-double arm_length = 11.75; // length of arm in inches
+double x_coord = 0.0;
+double theta = 0;
+double arm_length = 11.75;  // length of arm in inches
 
 const int potPin = A0;
 float potVal;
@@ -27,7 +27,7 @@ void loop() {
   if (Serial.available() > 0) {
     x_coord = Serial.parseFloat();
     theta = acos(x_coord / arm_length);
-    stepper.moveToPositionInRevolutions(theta/(2*PI));
+    stepper.moveToPositionInRevolutions(theta / (2 * PI));
   }
   // x_coord = Serial.parseFloat();
   // Serial.print("X coordinate: ");
