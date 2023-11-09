@@ -7,6 +7,7 @@ import serial
 CALIB_FRAME = 10  # Number of frames grabbed
 table_width = 3925
 table_height = 1875
+desired_fps = 35
 
 
 class PerspectiveCorrector:
@@ -28,6 +29,7 @@ class PerspectiveCorrector:
 
         # Check if any ArUco markers were detected
         if markerIds is not None:
+            print(f"There are{len(markerCorners)}")
             detectedMarkers = list(zip(markerCorners, markerIds))
             # Draw the boundaries of the detected ArUco markers on the frame
             cv.aruco.drawDetectedMarkers(frame, markerCorners, markerIds)
@@ -107,10 +109,11 @@ class PuckDetector:
 def main():
     # Initialize the video capture object to capture video from the default camera (camera 0)
     cap = cv.VideoCapture(0)
+    cap.set(12, 2)
     corrector = PerspectiveCorrector(3925, 1875)
     detector = PuckDetector()
 
-    arduino = serial.Serial(port="/dev/tty.usbmodem101", baudrate=115200)
+    arduino = serial.Serial(port="/dev/tty.usbmodem1101", baudrate=115200)
     # Initialize the number of frames
     num_frames = 0
 
@@ -125,23 +128,79 @@ def main():
             # Apply the perspective transformation to the captured frame
             corrected_frame = corrector.correct_frame(frame)
             if corrected_frame is not None:
-                # Display the result of the perspective transformation
-                # print("corrected frame is not none")
-                detect_result = detector.detect_puck(corrected_frame)
-                if detect_result is not None:
-                    detected_frame, center = detect_result
-                    # print("detect result is not none")
-                    if detected_frame is not None:
-                        # print("showing perspective corrected frame")
+                # # Display the result of the perspective transformation
+                # # print("corrected frame is not none")
+                # detect_result = detector.detect_puck(corrected_frame)
+                # if detect_result is not None:
+                #     detected_frame, center = detect_result
+                #     # print("detect result is not none")
+                #     if detected_frame is not None:
+                #         # print("showing perspective corrected frame")
 
-                        cv.imshow("Perspective Transform", detected_frame)
-                        if center is not None:
-                            print(center)
+                #         cv.imshow("Perspective Transform", detected_frame)
+                #         if center is not None:
+                #             print(center)
 
-                            x_in = round((float(center[1]) / 100) - 9.375, 2)
+                #             x_in = round((float(center[1]) / 100) - 9.375, 2)
 
-                            arduino.write(f"{x_in}\n".encode("utf-8"))
-                            print(f"{str(x_in)} written to serial port")
+                #             arduino.write(f"{x_in}\n".encode("utf-8"))
+                #             print(f"{str(x_in)} written to serial port")
+                # Convert the image to grayscale
+                # Convert the image from BGR to HSV color space
+                hsv = cv.cvtColor(corrected_frame, cv.COLOR_BGR2HSV)
+
+                # Define the lower and upper bounds of the HSV values for thresholding
+                # Adjust these values according to your object's color
+                lower_hsv = (0, 0, 100)
+                upper_hsv = (50, 255, 255)
+
+                # Threshold the HSV image to get only the desired colors
+                mask = cv.inRange(hsv, lower_hsv, upper_hsv)
+
+                cv.imshow("mask", mask)
+
+                # Erode to remove noise
+                kernel = np.ones((5, 5), np.uint8)
+                eroded = cv.erode(mask, kernel, iterations=1)
+
+                # Dilate to enhance the features
+                dilated = cv.dilate(eroded, kernel, iterations=1)
+
+                # Find contours in the thresholded image
+                contours, _ = cv.findContours(
+                    dilated, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE
+                )
+
+                if contours:
+                    # Find the largest contour in the frame and assume it is the object
+                    largest_contour = max(contours, key=cv.contourArea)
+                    cv.drawContours(
+                        corrected_frame, [largest_contour], -1, (0, 255, 0), 3
+                    )
+                    M = cv.moments(largest_contour)
+                    if M["m00"] != 0:
+                        cX = int(M["m10"] / M["m00"])
+                        cY = int(M["m01"] / M["m00"])
+                        center = (cX, cY)
+
+                        # Draw the largest contour and center on the image
+                        cv.drawContours(
+                            corrected_frame, [largest_contour], -1, (0, 255, 0), 3
+                        )
+                        cv.circle(corrected_frame, center, 7, (255, 255, 255), -1)
+
+                        # Show the image with the detected object
+                        cv.imshow("Processed Frame", corrected_frame)
+                        print(center)
+
+                        # Calculate the x_in value based on the center coordinates
+                        x_in = round((float(center[1]) / 100) - 9.375, 2)
+
+                        # Send the x_in value to the Arduino
+                        arduino.write(f"{x_in}\n".encode("utf-8"))
+                        print(f"{str(x_in)} written to serial port")
+                    else:
+                        print("No contour detected.")
 
             num_frames = num_frames + 1
 
