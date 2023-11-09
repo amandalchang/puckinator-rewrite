@@ -110,9 +110,7 @@ def main():
     corrector = PerspectiveCorrector(3925, 1875)
     detector = PuckDetector()
 
-    arduino = serial.Serial(
-        port="/dev/tty.usbmodem2101", baudrate=115200, timeout=0.1, write_timeout=0
-    )
+    arduino = serial.Serial(port="/dev/tty.usbmodem101", baudrate=115200)
     # Initialize the number of frames
     num_frames = 0
 
@@ -140,9 +138,9 @@ def main():
                         if center is not None:
                             print(center)
 
-                            x_in = (float(center[1]) / 100) - 9.375
+                            x_in = round((float(center[1]) / 100) - 9.375, 2)
 
-                            arduino.write(bytes(str(x_in), "utf-8"))
+                            arduino.write(f"{x_in}\n".encode("utf-8"))
                             print(f"{str(x_in)} written to serial port")
 
             num_frames = num_frames + 1
