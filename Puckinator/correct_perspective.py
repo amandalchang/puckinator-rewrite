@@ -139,11 +139,11 @@ class PuckDetector:
 def main():
     # Initialize the video capture object to capture video from the default camera (camera 0)
     cap = cv.VideoCapture(0)
-    cap.set(12, 2)
+    # cap.set(12, 2)
     corrector = PerspectiveCorrector(3925, 1875)
     detector = PuckDetector()
 
-    arduino = serial.Serial(port="/dev/tty.usbmodem1101", baudrate=115200)
+    arduino = serial.Serial(port="/dev/tty.usbmodem2101", baudrate=115200)
     # Initialize the number of frames
     num_frames = 0
 
@@ -244,7 +244,6 @@ def main():
         if key == ord("c"):
             corrector.calibrate(frame)
 
-    serial_thread.stop()
     # Release the video capture object to free resources
     cap.release()
     # Destroy all OpenCV-created windows to free resources
