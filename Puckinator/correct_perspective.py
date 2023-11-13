@@ -8,7 +8,37 @@ CALIB_FRAME = 10  # Number of frames grabbed
 table_width = 3925
 table_height = 1875
 desired_fps = 35
+arm_length = 11 # arm legnth in inches
+displacement = 10 # distance between motors in inches
 
+def coordinateconverter(cX, cY, arm_length, displacement):
+    """
+    Note:
+        The origin is defined to be at the axis of movement of the left motor.
+        This function is designed to return the desired angles of the two
+        motors on a five-bar parallel robot relative to the horizontal given
+        the length of the arms (assumed to be of equal length) and the distance
+        between the motors. They must be in the same length units.
+    Args:
+        cX: The x coordinate of the center of the puck
+        cY: The y coordinate of the center of the puck
+        length: The length of each of the four arms (inches)
+        displacement: The distance between the motors (inches)
+    Returns:
+        q1: the CCW angle of the left motor from the horizontal
+        q2: the CCW angle of the right motor from the horizontal
+    """
+    # Length of the diagonal between the origin and (cX, cY)
+    diag1 = np.sqrt(cX**2 + cY**2)
+    # Calculating left motor angle
+    q1 = np.arctan(cY/cX) + np.arccos(diag1/(2*arm_length))
+
+    # Length of the diagonal between the center of the right motor and (cX, cY)
+    diag2 = np.sqrt((displacement - cX)**2 + cY**2)
+    # Calculating right motor angle
+    q2 = np.pi - np.arctan(cY/(displacement - cX)) - np.arccos(diag2/(2*arm_length))
+    
+    return (q1, q2)
 
 class PerspectiveCorrector:
     def __init__(self, width, height) -> None:
