@@ -7,9 +7,8 @@ import time
 CALIB_FRAME = 10  # Number of frames grabbed
 TABLE_WIDTH = 3925
 TABLE_HEIGHT = 1875
-DESIRED_FPS = 35
-ARM_LENGTH = 11  # arm legnth in inches
-DISPLACEMENT = 10  # distance between motors in inches
+ARM_LENGTH = 8  # arm legnth in inches
+DISPLACEMENT = 5.1  # distance between motors in inches
 SERIAL_DELAY = 0.01
 
 
@@ -33,6 +32,8 @@ def coordinateconverter(cX, cY, arm_length, displacement):
     # Length of the diagonal between the origin and (cX, cY)
     diag1 = np.sqrt(cX**2 + cY**2)
     # Calculating left motor angle
+    if cX == 0.0:
+        cX = 0.001
     theta = np.arctan(cY / cX) + np.arccos(diag1 / (2 * arm_length))
 
     # Length of the diagonal between the center of the right motor and (cX, cY)
@@ -183,11 +184,19 @@ def main():
                         if center is not None:
                             # print(center)
                             (theta, phi) = coordinateconverter(
-                                cX, cY, ARM_LENGTH, DISPLACEMENT
+                                round((float(center[1]) / 100) - 6, 2),
+                                12,
+                                ARM_LENGTH,
+                                DISPLACEMENT,
                             )
-                            arduino.write(f"{theta},{phi}\n".encode("utf-8"))
+
+                            arduino.write(
+                                f"{theta - (3.14 / 2)},{phi - (3.14 / 2)}\n".encode(
+                                    "utf-8"
+                                )
+                            )
                             print(
-                                f"left: {theta} radians, right: {phi} radians written to serial"
+                                f"raw values: ({theta}, {phi}) written to serial: ({theta - (3.14 / 2)},{phi - (3.14 / 2)}) radians "
                             )
 
                             # x_in = round((float(center[1]) / 100) - 9.375, 2)

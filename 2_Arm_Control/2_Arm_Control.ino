@@ -21,7 +21,7 @@ const int LIMIT_SWITCH_PIN_2 = 10;
 // how much serial data we expect before a newline
 const unsigned int MAX_INPUT = 50;
 
-#define DEBUG
+//#define DEBUG
 #define HOME
 
 void setup() {
@@ -45,7 +45,7 @@ void setup() {
       digitalWrite(11, HIGH);
     }
   } else {
-    stepper1.setCurrentPositionInRevolutions(0.13);
+    stepper1.setCurrentPositionInRevolutions(0.15);
     stepper1.setTargetPositionInRevolutions(0);
   }
 
@@ -78,19 +78,37 @@ void process_data(const char *data) {
     char *token = strtok((char *)data, ",");  // Cast to non-const char* for strtok
     if (token != NULL) {
       float firstNumber = atof(token);  // Convert the first token to a float
-      stepper1.setTargetPositionInRevolutions(firstNumber / (2.0 * PI));
+      float theta_rot = firstNumber / (2.0 * PI);
+      if (theta_rot <= 0.15 && theta_rot >= -0.125) {
+        stepper1.setTargetPositionInRevolutions(theta_rot);
 #ifdef DEBUG
-      Serial.print("Moving stepper one to position: ");
-      Serial.println(firstNumber / (2.0 * PI));
+        Serial.print("Moving stepper one to position: ");
+        Serial.println(theta_rot);
 #endif
+      } else {
+#ifdef DEBUG
+        Serial.print("Aborted move due to value out of range: ");
+        Serial.println(theta_rot);
+#endif
+      }
+
+
       token = strtok(NULL, ",");  // Get the next token
       if (token != NULL) {
         float secondNumber = atof(token);  // Convert the second token to a float
-        stepper2.setTargetPositionInRevolutions(secondNumber / (2.0 * PI));
+        float phi_rot = secondNumber / (2.0 * PI);
+        if (phi_rot >= -0.17 && phi_rot <= 0.125) {
+          stepper2.setTargetPositionInRevolutions(phi_rot);
 #ifdef DEBUG
-        Serial.print("Moving stepper two to position: ");
-        Serial.println(secondNumber / (2.0 * PI));
+          Serial.print("Moving stepper two to position: ");
+          Serial.println(phi_rot);
 #endif
+        } else {
+#ifdef DEBUG
+          Serial.print("Aborted move due to value out of range: ");
+          Serial.println(phi_rot);
+#endif
+        }
       }
     }
   }
