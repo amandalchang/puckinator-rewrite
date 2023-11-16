@@ -152,7 +152,7 @@ def main():
     corrector = PerspectiveCorrector(3925, 1875)
     detector = PuckDetector()
 
-    arduino = serial.Serial(port="/dev/ttyACM1", baudrate=115200, write_timeout=0.1)
+    arduino = serial.Serial(port="/dev/ttyACM0", baudrate=115200, write_timeout=0.1)
     # Initialize the number of frames
     num_frames = 0
 
@@ -182,16 +182,25 @@ def main():
                         cv.imshow("Perspective Transform", resize)
                         if center is not None:
                             # print(center)
+                            (theta, phi) = coordinateconverter(
+                                cX, cY, ARM_LENGTH, DISPLACEMENT
+                            )
+                            arduino.write(f"{theta},{phi}\n".encode("utf-8"))
+                            print(
+                                f"left: {theta} radians, right: {phi} radians written to serial"
+                            )
 
-                            x_in = round((float(center[1]) / 100) - 9.375, 2)
-                            if (time.perf_counter() - timer) > SERIAL_DELAY:
-                                try:
-                                    arduino.write(f"{x_in}\n".encode("utf-8"))
-                                except serial.serialutil.SerialTimeoutException:
-                                    print("Serial timeout exception occured")
-                                else:
-                                    print(f"{str(x_in)} written to serial port")
-                                timer = time.perf_counter()
+                            # x_in = round((float(center[1]) / 100) - 9.375, 2)
+                            # arduino.write(f"{x_in}\n".encode())
+                            # print(f"{str(x_in)} written to serial port")
+                            # if (time.perf_counter() - timer) > SERIAL_DELAY:
+                            #     try:
+                            #         arduino.write(f"{x_in}\n".encode())
+                            #     except serial.serialutil.SerialTimeoutException:
+                            #         print("Serial timeout exception occured")
+                            #     else:
+                            #         print(f"{str(x_in)} written to serial port")
+                            #     timer = time.perf_counter()
                 # # Convert the image to grayscale
                 # # Convert the image from BGR to HSV color space
                 # hsv = cv.cvtColor(corrected_frame, cv.COLOR_BGR2HSV)
