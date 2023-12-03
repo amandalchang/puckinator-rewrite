@@ -11,6 +11,11 @@ ARM_LENGTH = 8  # arm legnth in inches
 DISPLACEMENT = 5.1  # distance between motors in inches
 SERIAL_DELAY = 0.01
 
+WAITING_POSITION = 4.0
+HITTING_POSITION = 8.0
+
+ARDUINO_ENABLED = False  # disable arduino comms for debugging
+
 
 def coordinateconverter(cX, cY, arm_length, displacement):
     """
@@ -87,7 +92,7 @@ class PerspectiveCorrector:
                     f"Desired corners (has shape {desired_corners.shape}):\n{desired_corners}"
                 )
 
-                # Define the coordinates of the corners of the paper in the output image
+                # Define the coordinates of the corners of the table in the output image
                 output_pts = np.array(
                     [
                         [0, 0],
@@ -152,10 +157,11 @@ def main():
     # cap.set(12, 2)
     corrector = PerspectiveCorrector(3925, 1875)
     detector = PuckDetector()
-
-    arduino = serial.Serial(port="/dev/ttyACM0", baudrate=115200, write_timeout=0.1)
+    if ARDUINO_ENABLED:
+        arduino = serial.Serial(port="/dev/ttyACM0", baudrate=115200, write_timeout=0.1)
     # Initialize the number of frames
     num_frames = 0
+    previous_center = None
 
     while True:
         # Capture a frame from the camera
@@ -179,9 +185,45 @@ def main():
                     # print("detect result is not none")
                     if detected_frame is not None:
                         # print("showing perspective corrected frame")
-                        resize = cv.resize(detected_frame, (1280, 720))
-                        cv.imshow("Perspective Transform", resize)
+                        resize = cv.resize(
+                            detected_frame,
+                            (int(TABLE_WIDTH / 4), int(TABLE_HEIGHT / 4)),
+                        )
+
                         if center is not None:
+                            center_float = tuple([float(x) for x in center])
+                            if previous_center is not None:
+                                print(center)
+                                print(previous_center)
+                                x1, y1 = previous_center
+                                x2, y2 = center_float
+
+                                # Calculate the slope
+                                if x2 != x1:
+                                    m = (y2 - y1) / (x2 - x1)
+                                    # Calculate the y-intercept
+                                    b = y1 - m * x1
+                                    # Calculate the end point of the line
+                                    x3 = x2 + (x2 - x1)
+                                    y3 = m * x3 + b
+                                else:
+                                    # This is a special case where the line is vertical
+                                    m = None
+                                    b = None
+
+                                print("line drawn on frame")
+                                # Draw the line on the image
+                                print(
+                                    f"line coords: ({int(x2)}, {int(y2)}), ({int(x3)}, {int(y3)})"
+                                )
+                                resize = cv.line(
+                                    resize,
+                                    (int(x2 / 4), int(y2 / 4)),
+                                    (int(x3 / 4), int(y3 / 4)),
+                                    (255, 0, 0),
+                                    2,
+                                )
+
                             # print(center)
                             (theta, phi) = coordinateconverter(
                                 round((float(center[1]) / 100) - 6, 2),
@@ -190,26 +232,32 @@ def main():
                                 DISPLACEMENT,
                             )
 
-                            arduino.write(
-                                f"{theta - (3.14 / 2)},{phi - (3.14 / 2)}\n".encode(
-                                    "utf-8"
-                                )
+                            previous_center = (
+                                center_float if center_float is not None else None
                             )
+
+                            if ARDUINO_ENABLED:
+                                arduino.write(
+                                    f"{theta - (3.14 / 2)},{phi - (3.14 / 2)}\n".encode(
+                                        "utf-8"
+                                    )
+                                )
                             print(
                                 f"raw values: ({theta}, {phi}) written to serial: ({theta - (3.14 / 2)},{phi - (3.14 / 2)}) radians "
                             )
+                        cv.imshow("Perspective Transform", resize)
+                        # x_in = round((float(center[1]) / 100) - 9.375, 2)
+                        # arduino.write(f"{x_in}\n".encode())
+                        # print(f"{str(x_in)} written to serial port")
+                        # if (time.perf_counter() - timer) > SERIAL_DELAY:
+                        #     try:
+                        #         arduino.write(f"{x_in}\n".encode())
+                        #     except serial.serialutil.SerialTimeoutException:
+                        #         print("Serial timeout exception occured")
+                        #     else:
+                        #         print(f"{str(x_in)} written to serial port")
+                        #     timer = time.perf_counter()
 
-                            # x_in = round((float(center[1]) / 100) - 9.375, 2)
-                            # arduino.write(f"{x_in}\n".encode())
-                            # print(f"{str(x_in)} written to serial port")
-                            # if (time.perf_counter() - timer) > SERIAL_DELAY:
-                            #     try:
-                            #         arduino.write(f"{x_in}\n".encode())
-                            #     except serial.serialutil.SerialTimeoutException:
-                            #         print("Serial timeout exception occured")
-                            #     else:
-                            #         print(f"{str(x_in)} written to serial port")
-                            #     timer = time.perf_counter()
                 # # Convert the image to grayscale
                 # # Convert the image from BGR to HSV color space
                 # hsv = cv.cvtColor(corrected_frame, cv.COLOR_BGR2HSV)
