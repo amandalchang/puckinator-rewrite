@@ -3,6 +3,7 @@ import numpy as np
 import serial
 import time
 import math
+from dataclasses import dataclass
 
 # Constants
 CALIB_FRAME = 10  # Number of frames grabbed
@@ -11,6 +12,7 @@ TABLE_HEIGHT = 1875 + 150
 ARM_LENGTH = 8  # arm legnth in inches
 DISPLACEMENT = 5  # distance between motors in inches
 SERIAL_DELAY = 0.01
+SPEED_THRESHOLD = 10  # inches per second
 
 WAITING_POSITION = 4.0
 HITTING_POSITION = 9.0
@@ -18,10 +20,61 @@ HITTING_POSITION = 9.0
 ARDUINO_ENABLED = True  # disable arduino comms for debugging
 
 
-def coordinateconverter(cX, cY, arm_length, displacement):
+def y_int_predict(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
+    """
+    Args:
+        x1, y1: the coordinates of previous_center
+        x2, y2: the coordinates of center
+        resize: the frame to draw the prediction vector onto
+        speed: the speed of the puck based on the time btwn
+            previous_center and center
+        intersect_x: the given value of x for which the y value needs to be
+            predicted for
+    Returns:
+        y_int: the y-value of the predicted position of the puck at a given x
+
+    This function draws a vector to show the predicted direction of the puck
+    and outputs the y-intersect. If the y-intersect is predicted to be beyond
+    the edges of the table, the function sets it to the closest limit of the
+    table. If the vector is vertical or the speed is lower than the speed
+    threshold, y_int matches the y-position of the puck.
+    """
+    x3 = None
+    y3 = None
+    time_elapsed = latest_pos.timestamp - prev_pos.timestamp
+    # in inches? check exact conversion
+    speed = (
+        math.dist(
+            prev_pos.pos_as_tuple(),
+            latest_pos.pos_as_tuple(),
+        )
+        / 100
+    ) / time_elapsed
+    if latest_pos.x != prev_pos.x:
+        m = (latest_pos.y - prev_pos.y) / (latest_pos.x - prev_pos.x)
+        # Calculate the y-intercept
+        b = prev_pos.y - m * prev_pos.x
+        # Calculate the end point of the line
+        x3 = latest_pos.x + (latest_pos.x - prev_pos.x)
+        y3 = m * x3 + b
+        y_int = m * (intersect_x * 100) + b
+    else:
+        # This is a special case where the line is vertical
+        print("the line is vertical")
+        y_int = latest_pos.y
+
+    y_int = min(1750, max(y_int, 135))
+    print(f"speed: {speed}")
+    if speed < SPEED_THRESHOLD:
+        y_int = latest_pos.y
+    return y_int, x3, y3
+
+
+def coordinateconverter(cY, cX, arm_length, displacement):
     """
     Note:
         The origin is defined to be at the axis of movement of the left motor.
+        The x direction here is the y direction outside of this function
         This function is designed to return the desired angles of the two
         motors on a five-bar parallel robot relative to the horizontal given
         the length of the arms (assumed to be of equal length) and the distance
@@ -50,6 +103,33 @@ def coordinateconverter(cX, cY, arm_length, displacement):
     )
 
     return (theta, phi)
+
+
+@dataclass
+class TimestampedPos:
+    """
+    This is in terms of OpenCV coordinates in pixels and timestamp is in seconds
+    """
+
+    x: float
+    y: float
+    timestamp: float
+
+    def pos_as_tuple(self):
+        return (self.x, self.y)
+
+
+@dataclass
+class PuckVector:
+    """
+    This is in terms of OpenCV coordinates in pixels and speed is in inches/second
+    """
+
+    x: int
+    y: int
+    m: float
+    b: float
+    speed: float
 
 
 class PerspectiveCorrector:
@@ -129,8 +209,7 @@ class PuckDetector:
         markerCorners, markerIds, _ = self.detector.detectMarkers(frame)
         # print("detect puck called")
         # Check if any ArUco markers were detected
-        center = None
-        timestamp = None
+
         if markerIds is not None:
             # print("marker IDs present")
             detectedMarkers = list(zip(markerCorners, markerIds))
@@ -138,15 +217,14 @@ class PuckDetector:
             cv.aruco.drawDetectedMarkers(frame, markerCorners, markerIds)
             # print(detectedMarkers)
             # Search for the target marker
-            for corners, id in detectedMarkers:
-                if id == 4:
+            for corners, marker_id in detectedMarkers:
+                if marker_id == 4:
                     # print(f"Corners list for id 4:\n{corners}")
-                    x_avg = np.mean([corner[0] for corner in corners[0]])
-                    y_avg = np.mean([corner[1] for corner in corners[0]])
-                    center = (x_avg, y_avg)
+                    x_avg = float(np.mean([corner[0] for corner in corners[0]]))
+                    y_avg = float(np.mean([corner[1] for corner in corners[0]]))
                     timestamp = time.perf_counter()
-                    # print(f"calculated center: {center}")
-        return (frame, center, timestamp)
+                    return (frame, TimestampedPos(x_avg, y_avg, timestamp))
+        return (frame, None)
 
 
 def main():
@@ -159,8 +237,7 @@ def main():
         arduino = serial.Serial(port="/dev/ttyACM0", baudrate=115200, write_timeout=0.1)
     # Initialize the number of frames
     num_frames = 0
-    previous_center = None
-    previous_timestamp = None
+    previous_position = None
 
     while True:
         # Capture a frame from the camera
@@ -180,7 +257,7 @@ def main():
                 # print("corrected frame is not none")
                 detect_result = detector.detect_puck(corrected_frame)
                 if detect_result is not None:
-                    detected_frame, center, timestamp = detect_result
+                    detected_frame, latest_position = detect_result
                     # print("detect result is not none")
                     if detected_frame is not None:
                         # print("showing perspective corrected frame")
@@ -189,78 +266,39 @@ def main():
                             (int(TABLE_WIDTH / 4), int(TABLE_HEIGHT / 4)),
                         )
 
-                        if center is not None:
-                            center_float = tuple([float(x) for x in center])
-
-                            if previous_center is not None:
-                                # print(center)
-                                # print(previous_center)
-                                x1, y1 = previous_center
-                                x2, y2 = center_float
-                                time_elapsed = timestamp - previous_timestamp
-                                # in inches? check exact conversion
-                                speed = (
-                                    math.dist([x1, y1], [x2, y2]) / 100
-                                ) / time_elapsed
-                                # print(f"{time_elapsed} seconds have passed")
-                                # print(f"{distance_traveled} is distance traveled")
-                                # print(
-                                #    f"{distance_traveled/time_elapsed} inches per second"
-                                # )
-
-                                # Calculate the slope
-                                # x1, x2, y1, y2 = slope_predictor(x1, x2, y1, y2)
-                                if x2 != x1:
-                                    m = (y2 - y1) / (x2 - x1)
-                                    # Calculate the y-intercept
-                                    b = y1 - m * x1
-                                    # Calculate the end point of the line
-                                    x3 = x2 + (x2 - x1)
-                                    y3 = m * x3 + b
-                                    y_int = m * (HITTING_POSITION * 100) + b
-                                else:
-                                    # This `is a special case where the line is vertical
-                                    print("the line is vertical")
-                                    b = None
-                                    y_int = y2
-
-                                y_int = min(1750, max(y_int, 135))
-                                print(f"speed: {speed}")
-                                if speed < 10:
-                                    y_int = y2
-                                # print("line drawn on frame")
-                                # Draw the line on the image
-                                # print(
-                                #     f"line coords: ({int(x2)}, {int(y2)}), ({int(x3)}, {int(y3)})"
-                                # )
-                                resize = cv.arrowedLine(
-                                    resize,
-                                    (int(x2 / 4), int(y2 / 4)),
-                                    (int(x3 / 4), int(y3 / 4)),
-                                    (255, 0, 0),
-                                    10,
+                        if latest_position is not None:
+                            if previous_position is not None:
+                                y_int, x3, y3 = y_int_predict(
+                                    previous_position,
+                                    latest_position,
                                 )
-
-                                # print(center)
+                                if x3 is not None and y3 is not None:
+                                    resize = cv.arrowedLine(
+                                        resize,
+                                        (
+                                            int(latest_position.x / 4),
+                                            int(latest_position.y / 4),
+                                        ),
+                                        (int(x3 / 4), int(y3 / 4)),
+                                        (255, 0, 0),
+                                        10,
+                                    )
+                                resize = cv.circle(
+                                    resize,
+                                    (int(HITTING_POSITION * 100 / 4), int((y_int) / 4)),
+                                    25,
+                                    (0, 0, 255),
+                                    3,
+                                )
                                 (theta, phi) = coordinateconverter(
                                     # round((float(center[1]) / 100) - 6, 2),
-                                    round(y_int / 100 - 6, 2),
                                     HITTING_POSITION,
+                                    round(y_int / 100 - 6, 2),
                                     ARM_LENGTH,
                                     DISPLACEMENT,
                                 )
                                 print(
-                                    f"go to position {round(y_int / 100 - 6, 2), HITTING_POSITION}"
-                                )
-                                resize = cv.circle(
-                                    resize,
-                                    (
-                                        int(HITTING_POSITION * 100 / 4),
-                                        int((y_int) / 4),
-                                    ),
-                                    25,
-                                    (0, 0, 255),
-                                    3,
+                                    f"go to position {HITTING_POSITION, round(y_int / 100 - 6, 2)}"
                                 )
 
                                 if ARDUINO_ENABLED:
@@ -273,21 +311,9 @@ def main():
                                 #     f"raw values: ({theta}, {phi}) written to serial: ({theta - (3.14 / 2)},{phi - (3.14 / 2)}) radians "
                                 # )
 
-                            previous_center = center_float
-                            previous_timestamp = timestamp
+                            previous_position = latest_position
 
                         cv.imshow("Perspective Transform", resize)
-                        # x_in = round((float(center[1]) / 100) - 9.375, 2)
-                        # arduino.write(f"{x_in}\n".encode())
-                        # print(f"{str(x_in)} written to serial port")
-                        # if (time.perf_counter() - timer) > SERIAL_DELAY:
-                        #     try:
-                        #         arduino.write(f"{x_in}\n".encode())
-                        #     except serial.serialutil.SerialTimeoutException:
-                        #         print("Serial timeout exception occured")
-                        #     else:
-                        #         print(f"{str(x_in)} written to serial port")
-                        #     timer = time.perf_counter()
 
             num_frames = num_frames + 1
 
