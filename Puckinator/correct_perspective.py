@@ -2,19 +2,20 @@ import cv2 as cv
 import numpy as np
 import serial
 import time
+import math
 
 # Constants
 CALIB_FRAME = 10  # Number of frames grabbed
-TABLE_WIDTH = 3925
-TABLE_HEIGHT = 1875
+TABLE_WIDTH = 3925 + 150
+TABLE_HEIGHT = 1875 + 150
 ARM_LENGTH = 8  # arm legnth in inches
-DISPLACEMENT = 5.1  # distance between motors in inches
+DISPLACEMENT = 5  # distance between motors in inches
 SERIAL_DELAY = 0.01
 
 WAITING_POSITION = 4.0
-HITTING_POSITION = 8.0
+HITTING_POSITION = 9.0
 
-ARDUINO_ENABLED = False  # disable arduino comms for debugging
+ARDUINO_ENABLED = True  # disable arduino comms for debugging
 
 
 def coordinateconverter(cX, cY, arm_length, displacement):
@@ -26,8 +27,8 @@ def coordinateconverter(cX, cY, arm_length, displacement):
         the length of the arms (assumed to be of equal length) and the distance
         between the motors. They must be in the same length units.
     Args:
-        cX: The x coordinate of the center of the puck
-        cY: The y coordinate of the center of the puck
+        cX: The x coordinate of the center of the striker
+        cY: The y coordinate of the center of the striker
         length: The length of each of the four arms (inches)
         displacement: The distance between the motors (inches)
     Returns:
@@ -39,15 +40,13 @@ def coordinateconverter(cX, cY, arm_length, displacement):
     # Calculating left motor angle
     if cX == 0.0:
         cX = 0.001
-    theta = np.arctan(cY / cX) + np.arccos(diag1 / (2 * arm_length))
+    theta = np.arctan2(cY, cX) + np.arccos(diag1 / (2 * arm_length))
 
     # Length of the diagonal between the center of the right motor and (cX, cY)
     diag2 = np.sqrt((displacement - cX) ** 2 + cY**2)
     # Calculating right motor angle
     phi = (
-        np.pi
-        - np.arctan(cY / (displacement - cX))
-        - np.arccos(diag2 / (2 * arm_length))
+        np.pi - np.arctan2(cY, displacement - cX) - np.arccos(diag2 / (2 * arm_length))
     )
 
     return (theta, phi)
@@ -72,7 +71,7 @@ class PerspectiveCorrector:
 
         # Check if any ArUco markers were detected
         if markerIds is not None:
-            print(f"There are{len(markerCorners)}")
+            print(f"There are {len(markerCorners)}")
             detectedMarkers = list(zip(markerCorners, markerIds))
             # Draw the boundaries of the detected ArUco markers on the frame
             cv.aruco.drawDetectedMarkers(frame, markerCorners, markerIds)
@@ -82,16 +81,15 @@ class PerspectiveCorrector:
                     zip(*sorted(detectedMarkers, key=lambda marker: marker[1]))
                 )[0]
 
-                print(f"Sorted markers:\n{sorted_markers}")
+                # print(f"Sorted markers:\n{sorted_markers}")
 
                 desired_corners = np.array(
                     [marker[0][0] for marker in sorted_markers]
                 )  # Extracting the first corner of each marker
 
-                print(
-                    f"Desired corners (has shape {desired_corners.shape}):\n{desired_corners}"
-                )
-
+                # print(
+                #     f"Desired corners (has shape {desired_corners.shape}):\n{desired_corners}"
+                # )
                 # Define the coordinates of the corners of the table in the output image
                 output_pts = np.array(
                     [
@@ -132,6 +130,7 @@ class PuckDetector:
         # print("detect puck called")
         # Check if any ArUco markers were detected
         center = None
+        timestamp = None
         if markerIds is not None:
             # print("marker IDs present")
             detectedMarkers = list(zip(markerCorners, markerIds))
@@ -145,23 +144,23 @@ class PuckDetector:
                     x_avg = np.mean([corner[0] for corner in corners[0]])
                     y_avg = np.mean([corner[1] for corner in corners[0]])
                     center = (x_avg, y_avg)
+                    timestamp = time.perf_counter()
                     # print(f"calculated center: {center}")
-        return (frame, center)
+        return (frame, center, timestamp)
 
 
 def main():
-    # Start timer
-    timer = time.perf_counter()
     # Initialize the video capture object to capture video from the default camera (camera 0)
     cap = cv.VideoCapture(4)
     # cap.set(12, 2)
-    corrector = PerspectiveCorrector(3925, 1875)
+    corrector = PerspectiveCorrector(TABLE_WIDTH, TABLE_HEIGHT)
     detector = PuckDetector()
     if ARDUINO_ENABLED:
         arduino = serial.Serial(port="/dev/ttyACM0", baudrate=115200, write_timeout=0.1)
     # Initialize the number of frames
     num_frames = 0
     previous_center = None
+    previous_timestamp = None
 
     while True:
         # Capture a frame from the camera
@@ -181,7 +180,7 @@ def main():
                 # print("corrected frame is not none")
                 detect_result = detector.detect_puck(corrected_frame)
                 if detect_result is not None:
-                    detected_frame, center = detect_result
+                    detected_frame, center, timestamp = detect_result
                     # print("detect result is not none")
                     if detected_frame is not None:
                         # print("showing perspective corrected frame")
@@ -192,13 +191,25 @@ def main():
 
                         if center is not None:
                             center_float = tuple([float(x) for x in center])
+
                             if previous_center is not None:
-                                print(center)
-                                print(previous_center)
+                                # print(center)
+                                # print(previous_center)
                                 x1, y1 = previous_center
                                 x2, y2 = center_float
+                                time_elapsed = timestamp - previous_timestamp
+                                # in inches? check exact conversion
+                                speed = (
+                                    math.dist([x1, y1], [x2, y2]) / 100
+                                ) / time_elapsed
+                                # print(f"{time_elapsed} seconds have passed")
+                                # print(f"{distance_traveled} is distance traveled")
+                                # print(
+                                #    f"{distance_traveled/time_elapsed} inches per second"
+                                # )
 
                                 # Calculate the slope
+                                # x1, x2, y1, y2 = slope_predictor(x1, x2, y1, y2)
                                 if x2 != x1:
                                     m = (y2 - y1) / (x2 - x1)
                                     # Calculate the y-intercept
@@ -206,16 +217,22 @@ def main():
                                     # Calculate the end point of the line
                                     x3 = x2 + (x2 - x1)
                                     y3 = m * x3 + b
+                                    y_int = m * HITTING_POSITION + b
                                 else:
-                                    # This is a special case where the line is vertical
-                                    m = None
+                                    # This `is a special case where the line is vertical
+                                    print("the line is vertical")
                                     b = None
+                                    y_int = y2
 
-                                print("line drawn on frame")
+                                y_int = min(1750, max(y_int, 135))
+                                print(f"speed: {speed}")
+                                if speed < 10:
+                                    y_int = y2
+                                # print("line drawn on frame")
                                 # Draw the line on the image
-                                print(
-                                    f"line coords: ({int(x2)}, {int(y2)}), ({int(x3)}, {int(y3)})"
-                                )
+                                # print(
+                                #     f"line coords: ({int(x2)}, {int(y2)}), ({int(x3)}, {int(y3)})"
+                                # )
                                 resize = cv.line(
                                     resize,
                                     (int(x2 / 4), int(y2 / 4)),
@@ -224,27 +241,41 @@ def main():
                                     2,
                                 )
 
-                            # print(center)
-                            (theta, phi) = coordinateconverter(
-                                round((float(center[1]) / 100) - 6, 2),
-                                12,
-                                ARM_LENGTH,
-                                DISPLACEMENT,
-                            )
-
-                            previous_center = (
-                                center_float if center_float is not None else None
-                            )
-
-                            if ARDUINO_ENABLED:
-                                arduino.write(
-                                    f"{theta - (3.14 / 2)},{phi - (3.14 / 2)}\n".encode(
-                                        "utf-8"
-                                    )
+                                # print(center)
+                                (theta, phi) = coordinateconverter(
+                                    # round((float(center[1]) / 100) - 6, 2),
+                                    round(y_int / 100 - 6, 2),
+                                    HITTING_POSITION,
+                                    ARM_LENGTH,
+                                    DISPLACEMENT,
                                 )
-                            print(
-                                f"raw values: ({theta}, {phi}) written to serial: ({theta - (3.14 / 2)},{phi - (3.14 / 2)}) radians "
-                            )
+                                print(
+                                    f"go to position {round(y_int / 100 - 6, 2), HITTING_POSITION}"
+                                )
+                                resize = cv.circle(
+                                    resize,
+                                    (
+                                        int(HITTING_POSITION * 100 / 4),
+                                        int((y_int) / 4),
+                                    ),
+                                    25,
+                                    (0, 0, 255),
+                                    3,
+                                )
+
+                                if ARDUINO_ENABLED:
+                                    arduino.write(
+                                        f"{theta - (3.14 / 2)},{phi - (3.14 / 2)}\n".encode(
+                                            "utf-8"
+                                        )
+                                    )
+                                # print(
+                                #     f"raw values: ({theta}, {phi}) written to serial: ({theta - (3.14 / 2)},{phi - (3.14 / 2)}) radians "
+                                # )
+
+                            previous_center = center_float
+                            previous_timestamp = timestamp
+
                         cv.imshow("Perspective Transform", resize)
                         # x_in = round((float(center[1]) / 100) - 9.375, 2)
                         # arduino.write(f"{x_in}\n".encode())
@@ -257,66 +288,6 @@ def main():
                         #     else:
                         #         print(f"{str(x_in)} written to serial port")
                         #     timer = time.perf_counter()
-
-                # # Convert the image to grayscale
-                # # Convert the image from BGR to HSV color space
-                # hsv = cv.cvtColor(corrected_frame, cv.COLOR_BGR2HSV)
-
-                # # Define the lower and upper bounds of the HSV values for thresholding
-                # # Adjust these values according to your object's color
-                # lower_hsv = (0, 0, 100)
-                # upper_hsv = (50, 255, 255)
-
-                # # Threshold the HSV image to get only the desired colors
-                # mask = cv.inRange(hsv, lower_hsv, upper_hsv)
-
-                # cv.imshow("mask", mask)
-
-                # # Erode to remove noise
-                # kernel = np.ones((5, 5), np.uint8)
-                # eroded = cv.erode(mask, kernel, iterations=1)
-
-                # # Dilate to enhance the features
-                # dilated = cv.dilate(eroded, kernel, iterations=1)
-
-                # # Find contours in the thresholded image
-                # contours, _ = cv.findContours(
-                #     dilated, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE
-                # )
-
-                # if contours:
-                #     # Find the largest contour in the frame and assume it is the object
-                #     largest_contour = max(contours, key=cv.contourArea)
-                #     cv.drawContours(
-                #         corrected_frame, [largest_contour], -1, (0, 255, 0), 3
-                #     )
-                #     M = cv.moments(largest_contour)
-                #     if M["m00"] != 0:
-                #         cX = int(M["m10"] / M["m00"])
-                #         cY = int(M["m01"] / M["m00"])
-                #         center = (cX, cY)
-
-                #         # Draw the largest contour and center on the image
-                #         cv.drawContours(
-                #             corrected_frame, [largest_contour], -1, (0, 255, 0), 3
-                #         )
-                #         cv.circle(corrected_frame, center, 7, (255, 255, 255), -1)
-
-                #         # Show the image with the detected object
-                #         cv.imshow("Processed Frame", corrected_frame)
-                #         print(center)
-                #         # (theta, phi) = coordinateconverter(cX, cY, ARM_LENGTH, DISPLACEMENT)
-                #         # arduino.write(f"({theta, phi})\n".encode("utf-8"))
-                #         # print(f"left: {theta} radians, right: {phi} radians written to serial")
-
-                #         # Calculate the x_in value based on the center coordinates
-                #         x_in = round((float(center[1]) / 100) - 9.375, 2)
-
-                #         # Send the x_in value to the Arduino
-                #         arduino.write(f"{x_in}\n".encode("utf-8"))
-                #         print(f"{str(x_in)} written to serial port")
-                #     else:
-                #         print("No contour detected.")
 
             num_frames = num_frames + 1
 

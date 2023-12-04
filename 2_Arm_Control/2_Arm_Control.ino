@@ -16,7 +16,7 @@ double arm_length = 11.75; // length of arm in inches
 
 const int LIMIT_SWITCH_PIN_1 = 11;
 const int LIMIT_SWITCH_PIN_2 = 12;
-const int ESTOP_PIN = 13;
+// const int ESTOP_PIN = 13;
 
 int Estop_val;
 
@@ -54,7 +54,7 @@ void setup()
   }
   else
   {
-    stepper1.setCurrentPositionInRevolutions(0.15);
+    stepper1.setCurrentPositionInRevolutions(0.225);
     stepper1.setTargetPositionInRevolutions(0);
   }
 
@@ -96,7 +96,7 @@ void process_data(const char *data)
     {
       float firstNumber = atof(token); // Convert the first token to a float
       float theta_rot = firstNumber / (2.0 * PI);
-      if (theta_rot <= 0.15 && theta_rot >= -0.125)
+      if (true)//(theta_rot <= 0.15 && theta_rot >= -0.125)
       {
         stepper1.setTargetPositionInRevolutions(theta_rot);
 #ifdef DEBUG
@@ -117,7 +117,7 @@ void process_data(const char *data)
       {
         float secondNumber = atof(token); // Convert the second token to a float
         float phi_rot = secondNumber / (2.0 * PI);
-        if (phi_rot >= -0.17 && phi_rot <= 0.125)
+        if (true)//phi_rot >= -0.17 && phi_rot <= 0.125)
         {
           stepper2.setTargetPositionInRevolutions(phi_rot);
 #ifdef DEBUG
