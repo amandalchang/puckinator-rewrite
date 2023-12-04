@@ -23,25 +23,29 @@ ARDUINO_ENABLED = True  # disable arduino comms for debugging
 def y_int_predict(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
     """
     Args:
-        x1, y1: the coordinates of previous_center
-        x2, y2: the coordinates of center
-        resize: the frame to draw the prediction vector onto
-        speed: the speed of the puck based on the time btwn
-            previous_center and center
-        intersect_x: the given value of x for which the y value needs to be
-            predicted for
+        prev_pos: an instance of TimedstampedPos
+        latest_pos: an instance of TimedstampedPos
+        intersect_x: the x position represented by a float of the predicted
+            spot for the puck
     Returns:
-        y_int: the y-value of the predicted position of the puck at a given x
+        y_int: a float representing the y-value of the predicted position
+            of the puck at a given x
+        x3: a float representing the x value of the endpoint of the velocity
+            vector
+        y3: a float representing the y value of the endpoint of the velocity
+            vector
 
     This function draws a vector to show the predicted direction of the puck
     and outputs the y-intersect. If the y-intersect is predicted to be beyond
     the edges of the table, the function sets it to the closest limit of the
     table. If the vector is vertical or the speed is lower than the speed
-    threshold, y_int matches the y-position of the puck.
+    threshold, y_int matches the y-position of the puck. It also outputs x3 and
+    y3, which represent the endpoint of a predictive velocity vector drawn
+    based upon the direction and speed of the puck.
     """
+    time_elapsed = latest_pos.timestamp - prev_pos.timestamp
     x3 = None
     y3 = None
-    time_elapsed = latest_pos.timestamp - prev_pos.timestamp
     # in inches? check exact conversion
     speed = (
         math.dist(
@@ -67,6 +71,7 @@ def y_int_predict(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
     print(f"speed: {speed}")
     if speed < SPEED_THRESHOLD:
         y_int = latest_pos.y
+
     return y_int, x3, y3
 
 
@@ -125,8 +130,8 @@ class PuckVector:
     This is in terms of OpenCV coordinates in pixels and speed is in inches/second
     """
 
-    x: int
-    y: int
+    end_x: int
+    end_y: int
     m: float
     b: float
     speed: float
@@ -249,73 +254,69 @@ def main():
         if not ret:
             print("Failed to grab frame")
             break  # Exit the loop if frame capture failed
-        else:
-            # Apply the perspective transformation to the captured frame
-            corrected_frame = corrector.correct_frame(frame)
-            if corrected_frame is not None:
-                # Display the result of the perspective transformation
-                # print("corrected frame is not none")
-                detect_result = detector.detect_puck(corrected_frame)
-                if detect_result is not None:
-                    detected_frame, latest_position = detect_result
-                    # print("detect result is not none")
-                    if detected_frame is not None:
-                        # print("showing perspective corrected frame")
-                        resize = cv.resize(
-                            detected_frame,
-                            (int(TABLE_WIDTH / 4), int(TABLE_HEIGHT / 4)),
-                        )
+        # Apply the perspective transformation to the captured frame
+        corrected_frame = corrector.correct_frame(frame)
+        if corrected_frame is not None:
+            # Display the result of the perspective transformation
+            detect_result = detector.detect_puck(corrected_frame)
+            if detect_result is not None:
+                detected_frame, latest_position = detect_result
+                if detected_frame is not None:
+                    resize = cv.resize(
+                        detected_frame,
+                        (int(TABLE_WIDTH / 4), int(TABLE_HEIGHT / 4)),
+                    )
 
-                        if latest_position is not None:
-                            if previous_position is not None:
-                                y_int, x3, y3 = y_int_predict(
-                                    previous_position,
-                                    latest_position,
-                                )
-                                if x3 is not None and y3 is not None:
-                                    resize = cv.arrowedLine(
-                                        resize,
-                                        (
-                                            int(latest_position.x / 4),
-                                            int(latest_position.y / 4),
-                                        ),
-                                        (int(x3 / 4), int(y3 / 4)),
-                                        (255, 0, 0),
-                                        10,
-                                    )
-                                resize = cv.circle(
+                    if latest_position is not None:
+                        if previous_position is not None:
+                            y_int, x3, y3 = y_int_predict(
+                                previous_position,
+                                latest_position,
+                            )
+                            if x3 is not None and y3 is not None:
+                                resize = cv.arrowedLine(
                                     resize,
-                                    (int(HITTING_POSITION * 100 / 4), int((y_int) / 4)),
-                                    25,
-                                    (0, 0, 255),
-                                    3,
+                                    (
+                                        int(latest_position.x / 4),
+                                        int(latest_position.y / 4),
+                                    ),
+                                    (int(x3 / 4), int(y3 / 4)),
+                                    (255, 0, 0),
+                                    10,
                                 )
-                                (theta, phi) = coordinateconverter(
-                                    # round((float(center[1]) / 100) - 6, 2),
-                                    HITTING_POSITION,
-                                    round(y_int / 100 - 6, 2),
-                                    ARM_LENGTH,
-                                    DISPLACEMENT,
-                                )
-                                print(
-                                    f"go to position {HITTING_POSITION, round(y_int / 100 - 6, 2)}"
-                                )
+                            resize = cv.circle(
+                                resize,
+                                (int(HITTING_POSITION * 100 / 4), int((y_int) / 4)),
+                                25,
+                                (0, 0, 255),
+                                3,
+                            )
+                            (theta, phi) = coordinateconverter(
+                                # round((float(center[1]) / 100) - 6, 2),
+                                HITTING_POSITION,
+                                round(y_int / 100 - 6, 2),
+                                ARM_LENGTH,
+                                DISPLACEMENT,
+                            )
+                            print(
+                                f"go to position {HITTING_POSITION, round(y_int / 100 - 6, 2)}"
+                            )
 
-                                if ARDUINO_ENABLED:
-                                    arduino.write(
-                                        f"{theta - (3.14 / 2)},{phi - (3.14 / 2)}\n".encode(
-                                            "utf-8"
-                                        )
+                            if ARDUINO_ENABLED:
+                                arduino.write(
+                                    f"{theta - (3.14 / 2)},{phi - (3.14 / 2)}\n".encode(
+                                        "utf-8"
                                     )
-                                # print(
-                                #     f"raw values: ({theta}, {phi}) written to serial: ({theta - (3.14 / 2)},{phi - (3.14 / 2)}) radians "
-                                # )
+                                )
+                            # print(
+                            #     f"raw values: ({theta}, {phi}) written to serial: ({theta - (3.14 / 2)},{phi - (3.14 / 2)}) radians "
+                            # )
 
-                            previous_position = latest_position
+                        previous_position = latest_position
 
-                        cv.imshow("Perspective Transform", resize)
+                    cv.imshow("Perspective Transform", resize)
 
-            num_frames = num_frames + 1
+        num_frames += 1
 
         # Display the original frame with the detected ArUco markers
         cv.imshow("Frame", frame)
