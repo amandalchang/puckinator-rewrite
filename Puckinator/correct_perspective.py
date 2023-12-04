@@ -217,7 +217,7 @@ def main():
                                     # Calculate the end point of the line
                                     x3 = x2 + (x2 - x1)
                                     y3 = m * x3 + b
-                                    y_int = m * HITTING_POSITION + b
+                                    y_int = m * (HITTING_POSITION * 100) + b
                                 else:
                                     # This `is a special case where the line is vertical
                                     print("the line is vertical")
@@ -233,12 +233,12 @@ def main():
                                 # print(
                                 #     f"line coords: ({int(x2)}, {int(y2)}), ({int(x3)}, {int(y3)})"
                                 # )
-                                resize = cv.line(
+                                resize = cv.arrowedLine(
                                     resize,
                                     (int(x2 / 4), int(y2 / 4)),
                                     (int(x3 / 4), int(y3 / 4)),
                                     (255, 0, 0),
-                                    2,
+                                    10,
                                 )
 
                                 # print(center)
