@@ -38,11 +38,11 @@ void setup()
 
   stepper1.setStepsPerRevolution(1600 * 3);
   stepper1.setSpeedInRevolutionsPerSecond(5);
-  stepper1.setAccelerationInRevolutionsPerSecondPerSecond(10);
+  stepper1.setAccelerationInRevolutionsPerSecondPerSecond(1);
 
   stepper2.setStepsPerRevolution(1600 * 3);
   stepper2.setSpeedInRevolutionsPerSecond(5);
-  stepper2.setAccelerationInRevolutionsPerSecondPerSecond(10);
+  stepper2.setAccelerationInRevolutionsPerSecondPerSecond(1);
 
 #ifdef HOME
   if (stepper1.moveToHomeInRevolutions(1, 0.1, 10, LIMIT_SWITCH_PIN_1) != true)
@@ -54,7 +54,7 @@ void setup()
   }
   else
   {
-    stepper1.setCurrentPositionInRevolutions(0.225);
+    stepper1.setCurrentPositionInRevolutions(0.315);
     stepper1.setTargetPositionInRevolutions(0);
   }
 
@@ -67,7 +67,7 @@ void setup()
   }
   else
   {
-    stepper2.setCurrentPositionInRevolutions(-0.17);
+    stepper2.setCurrentPositionInRevolutions(-0.355);
     stepper2.setTargetPositionInRevolutions(0);
   }
 #endif

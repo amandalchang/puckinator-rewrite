@@ -12,22 +12,30 @@ TABLE_HEIGHT = 1875 + 150
 ARM_LENGTH = 8  # arm legnth in inches
 DISPLACEMENT = 5  # distance between motors in inches
 SERIAL_DELAY = 0.01
-SPEED_THRESHOLD = 10  # inches per second
+SPEED_THRESHOLD = 5  # inches per second
 
 WAITING_POSITION = 4.0
-HITTING_POSITION = 9.0
+HITTING_POSITION = 5.0  # x-direction inches from the upper left corner
+X_OFFSET = 4  # inches coordinate converter is offset from the upper left corner of the upper left ArUco
+Y_OFFSET = 7.375  # inches coordinate converter offset from the upper left corner of the upper left ArUco
 
-ARDUINO_ENABLED = True  # disable arduino comms for debugging
+ARDUINO_ENABLED = False  # disable arduino comms for debugging
+DRAW_ENABLED = True  # disable arrow and circle drawing to fix latency
+TRAJECTORY_PREDICT = True  # disable trajectory prediction to optimize latency
+PERF_COUNTER_ENABLED = True  # disable perf_counter for less print statements
 
 
 def send_coordinates_to_arduino(desired_y, arduino, desired_x=HITTING_POSITION):
     (theta, phi) = coordinateconverter(
-        desired_x,
-        round(desired_y / 100 - 6, 2),
+        desired_x + X_OFFSET,
+        round(desired_y / 100 - Y_OFFSET, 2),
         ARM_LENGTH,
         DISPLACEMENT,
     )
-    print(f"go to position {desired_x, round(desired_y / 100 - 6, 2)}")
+    print(f"desired y position: {desired_y}")
+    print(
+        f"go to position {desired_x + X_OFFSET, round(desired_y / 100 - Y_OFFSET, 2)}"
+    )
 
     if ARDUINO_ENABLED:
         arduino.write(f"{theta - (3.14 / 2)},{phi - (3.14 / 2)}\n".encode("utf-8"))
@@ -83,10 +91,13 @@ def y_int_predict(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
         print("the line is vertical")
         y_int = latest_pos.y
 
-    y_int = min(1750, max(y_int, 135))
-    print(f"speed: {speed}")
+    # print(f"speed: {speed}")
     if speed < SPEED_THRESHOLD:
         y_int = latest_pos.y
+
+    y_int = min(
+        1835, max(y_int, 181)
+    )  # clamp Y position to safe values within the bounds of the table
 
     return y_int, x3, y3
 
@@ -101,9 +112,9 @@ def coordinateconverter(cY, cX, arm_length, displacement):
         the length of the arms (assumed to be of equal length) and the distance
         between the motors. They must be in the same length units.
     Args:
-        cX: The x coordinate of the center of the striker
+        cX: The x coordinate of the center of the striker based on arm coordinates
         cY: The y coordinate of the center of the striker
-        length: The length of each of the four arms (inches)
+        arm_length: The length of each of the four arms (inches)
         displacement: The distance between the motors (inches)
     Returns:
         q1: the radian CCW angle of the left motor from the horizontal
@@ -223,11 +234,17 @@ class PuckDetector:
         self.dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_50)
         # Create an instance of DetectorParameters for configuring ArUco detection
         self.parameters = cv.aruco.DetectorParameters()
+        self.parameters.maxMarkerPerimeterRate = 1
+        self.parameters.polygonalApproxAccuracyRate = 0.1
         # Create an ArucoDetector object with the predefined dictionary and custom parameters
         self.detector = cv.aruco.ArucoDetector(self.dictionary, self.parameters)
 
-    def detect_puck(self, frame):
+    def detect_puck(self, frame, starttime):
+        if PERF_COUNTER_ENABLED:
+            print(f"detect puck started at {time.perf_counter() - starttime}")
         markerCorners, markerIds, _ = self.detector.detectMarkers(frame)
+        if PERF_COUNTER_ENABLED:
+            print(f"detect marker finished at {time.perf_counter() - starttime}")
         # print("detect puck called")
         # Check if any ArUco markers were detected
 
@@ -245,6 +262,8 @@ class PuckDetector:
                     y_avg = float(np.mean([corner[1] for corner in corners[0]]))
                     timestamp = time.perf_counter()
                     return (frame, TimestampedPos(x_avg, y_avg, timestamp))
+        if PERF_COUNTER_ENABLED:
+            print(f"detect puck finished at {time.perf_counter() - starttime}")
         return (frame, None)
 
 
@@ -263,6 +282,17 @@ def main():
     while True:
         # Capture a frame from the camera
         ret, frame = cap.read()
+        width = cap.get(3)  # float `width`
+        height = cap.get(4)  # float `height`
+
+        print("width, height:", width, height)
+
+        fps = cap.get(5)
+
+        print("fps:", fps)  # float `fps`
+        starttime = time.perf_counter()
+        if PERF_COUNTER_ENABLED:
+            print(f"frame read at {time.perf_counter()}")
         # Converting the image to grayscale and then to binary
         # frame = cv.threshold(cv.cvtColor(frame, cv.COLOR_BGR2GRAY), 127, 255, 0)
 
@@ -271,47 +301,61 @@ def main():
             print("Failed to grab frame")
             break  # Exit the loop if frame capture failed
         # Apply the perspective transformation to the captured frame
+        resized_frame = cv.resize(frame, (int(TABLE_WIDTH / 4), int(TABLE_HEIGHT / 4)))
         corrected_frame = corrector.correct_frame(frame)
+
+        if PERF_COUNTER_ENABLED:
+            print(f"frame corrected at {time.perf_counter() - starttime}")
         if corrected_frame is not None:
             # Display the result of the perspective transformation
-            detect_result = detector.detect_puck(corrected_frame)
+            detect_result = detector.detect_puck(corrected_frame, starttime)
             if detect_result is not None:
                 detected_frame, latest_position = detect_result
                 if detected_frame is not None:
-                    resize = cv.resize(
-                        detected_frame,
-                        (int(TABLE_WIDTH / 4), int(TABLE_HEIGHT / 4)),
-                    )
-
+                    # resize = cv.resize(
+                    #    detected_frame,
+                    #    (int(TABLE_WIDTH / 4), int(TABLE_HEIGHT / 4)),
+                    # )
+                    resize = resized_frame
                     if latest_position is not None:
+                        print(
+                            f"latest puck position: {latest_position.x, latest_position.y}"
+                        )
                         if previous_position is not None:
-                            y_int, x3, y3 = y_int_predict(
-                                previous_position,
-                                latest_position,
-                            )
-                            if x3 is not None and y3 is not None:
-                                resize = cv.arrowedLine(
-                                    resize,
-                                    (
-                                        int(latest_position.x / 4),
-                                        int(latest_position.y / 4),
-                                    ),
-                                    (int(x3 / 4), int(y3 / 4)),
-                                    (255, 0, 0),
-                                    10,
+                            if TRAJECTORY_PREDICT:
+                                y_int, x3, y3 = y_int_predict(
+                                    previous_position,
+                                    latest_position,
                                 )
-                            resize = cv.circle(
-                                resize,
-                                (int(HITTING_POSITION * 100 / 4), int((y_int) / 4)),
-                                25,
-                                (0, 0, 255),
-                                3,
-                            )
 
-                            send_coordinates_to_arduino(y_int, arduino)
+                                if DRAW_ENABLED:
+                                    if x3 is not None and y3 is not None:
+                                        resize = cv.arrowedLine(
+                                            resize,
+                                            (
+                                                int(latest_position.x / 4),
+                                                int(latest_position.y / 4),
+                                            ),
+                                            (int(x3 / 4), int(y3 / 4)),
+                                            (255, 0, 0),
+                                            10,
+                                        )
+                                    resize = cv.circle(
+                                        resize,
+                                        (
+                                            int((HITTING_POSITION) * 100 / 4),
+                                            int((y_int) / 4),
+                                        ),
+                                        25,
+                                        (0, 0, 255),
+                                        3,
+                                    )
+                                if ARDUINO_ENABLED:
+                                    send_coordinates_to_arduino(y_int, arduino)
 
                         previous_position = latest_position
-
+                    if PERF_COUNTER_ENABLED:
+                        print(f"frame show at {time.perf_counter() - starttime}")
                     cv.imshow("Perspective Transform", resize)
 
         num_frames += 1
