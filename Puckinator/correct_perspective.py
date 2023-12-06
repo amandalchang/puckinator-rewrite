@@ -20,6 +20,22 @@ HITTING_POSITION = 9.0
 ARDUINO_ENABLED = True  # disable arduino comms for debugging
 
 
+def send_coordinates_to_arduino(desired_y, arduino, desired_x=HITTING_POSITION):
+    (theta, phi) = coordinateconverter(
+        desired_x,
+        round(desired_y / 100 - 6, 2),
+        ARM_LENGTH,
+        DISPLACEMENT,
+    )
+    print(f"go to position {desired_x, round(desired_y / 100 - 6, 2)}")
+
+    if ARDUINO_ENABLED:
+        arduino.write(f"{theta - (3.14 / 2)},{phi - (3.14 / 2)}\n".encode("utf-8"))
+    # print(
+    #     f"raw values: ({theta}, {phi}) written to serial: ({theta - (3.14 / 2)},{phi - (3.14 / 2)}) radians "
+    # )
+
+
 def y_int_predict(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
     """
     Args:
@@ -291,26 +307,8 @@ def main():
                                 (0, 0, 255),
                                 3,
                             )
-                            (theta, phi) = coordinateconverter(
-                                # round((float(center[1]) / 100) - 6, 2),
-                                HITTING_POSITION,
-                                round(y_int / 100 - 6, 2),
-                                ARM_LENGTH,
-                                DISPLACEMENT,
-                            )
-                            print(
-                                f"go to position {HITTING_POSITION, round(y_int / 100 - 6, 2)}"
-                            )
 
-                            if ARDUINO_ENABLED:
-                                arduino.write(
-                                    f"{theta - (3.14 / 2)},{phi - (3.14 / 2)}\n".encode(
-                                        "utf-8"
-                                    )
-                                )
-                            # print(
-                            #     f"raw values: ({theta}, {phi}) written to serial: ({theta - (3.14 / 2)},{phi - (3.14 / 2)}) radians "
-                            # )
+                            send_coordinates_to_arduino(y_int, arduino)
 
                         previous_position = latest_position
 
