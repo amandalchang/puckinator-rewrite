@@ -4,37 +4,39 @@ import serial
 import time
 import math
 from dataclasses import dataclass
+from imutils.video import WebcamVideoStream
+from imutils.video import FPS
+import imutils
 
 # Constants
-CALIB_FRAME = 10  # Number of frames grabbed
-TABLE_WIDTH = 3925 + 150
-TABLE_HEIGHT = 1875 + 150
-ARM_LENGTH = 8  # arm legnth in inches
-DISPLACEMENT = 5  # distance between motors in inches
-SERIAL_DELAY = 0.01
-SPEED_THRESHOLD = 5  # inches per second
+PIXELS_PER_INCH = 25  # number of pixels per physical inch on the air hockey table
+TABLE_WIDTH = int((39.25 + 1.5) * PIXELS_PER_INCH)
+TABLE_HEIGHT = int((18.75 + 1.5) * PIXELS_PER_INCH)
+ARM_LENGTH = 8.0  # arm legnth in inches
+DISPLACEMENT = 5.0  # distance between motors in inches
+SPEED_THRESHOLD = 5.0  # inches per second
 
 WAITING_POSITION = 4.0
-HITTING_POSITION = 5.0  # x-direction inches from the upper left corner
+HITTING_POSITION = 7.0  # x-direction inches from the upper left corner
 X_OFFSET = 4  # inches coordinate converter is offset from the upper left corner of the upper left ArUco
-Y_OFFSET = 7.375  # inches coordinate converter offset from the upper left corner of the upper left ArUco
+Y_OFFSET = 7.75  # inches coordinate converter offset from the upper left corner of the upper left ArUco
 
-ARDUINO_ENABLED = False  # disable arduino comms for debugging
+ARDUINO_ENABLED = True  # disable arduino comms for debugging
 DRAW_ENABLED = True  # disable arrow and circle drawing to fix latency
 TRAJECTORY_PREDICT = True  # disable trajectory prediction to optimize latency
-PERF_COUNTER_ENABLED = True  # disable perf_counter for less print statements
+PERF_COUNTER_ENABLED = False  # disable perf_counter for less print statements
 
 
 def send_coordinates_to_arduino(desired_y, arduino, desired_x=HITTING_POSITION):
     (theta, phi) = coordinateconverter(
         desired_x + X_OFFSET,
-        round(desired_y / 100 - Y_OFFSET, 2),
+        round((desired_y / PIXELS_PER_INCH) - Y_OFFSET, 2),
         ARM_LENGTH,
         DISPLACEMENT,
     )
     print(f"desired y position: {desired_y}")
     print(
-        f"go to position {desired_x + X_OFFSET, round(desired_y / 100 - Y_OFFSET, 2)}"
+        f"go to position {desired_x + X_OFFSET, round((desired_y / PIXELS_PER_INCH) - Y_OFFSET, 2)}"
     )
 
     if ARDUINO_ENABLED:
@@ -70,13 +72,13 @@ def y_int_predict(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
     time_elapsed = latest_pos.timestamp - prev_pos.timestamp
     x3 = None
     y3 = None
-    # in inches? check exact conversion
+
     speed = (
         math.dist(
             prev_pos.pos_as_tuple(),
             latest_pos.pos_as_tuple(),
         )
-        / 100
+        / PIXELS_PER_INCH
     ) / time_elapsed
     if latest_pos.x != prev_pos.x:
         m = (latest_pos.y - prev_pos.y) / (latest_pos.x - prev_pos.x)
@@ -85,10 +87,11 @@ def y_int_predict(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
         # Calculate the end point of the line
         x3 = latest_pos.x + (latest_pos.x - prev_pos.x)
         y3 = m * x3 + b
-        y_int = m * (intersect_x * 100) + b
+        y_int = m * (intersect_x * PIXELS_PER_INCH) + b
+        print("different X values :)")
     else:
         # This is a special case where the line is vertical
-        print("the line is vertical")
+        # print("the line is vertical")
         y_int = latest_pos.y
 
     # print(f"speed: {speed}")
@@ -96,7 +99,7 @@ def y_int_predict(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
         y_int = latest_pos.y
 
     y_int = min(
-        1835, max(y_int, 181)
+        456, max(y_int, 43)
     )  # clamp Y position to safe values within the bounds of the table
 
     return y_int, x3, y3
@@ -234,8 +237,8 @@ class PuckDetector:
         self.dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_50)
         # Create an instance of DetectorParameters for configuring ArUco detection
         self.parameters = cv.aruco.DetectorParameters()
-        self.parameters.maxMarkerPerimeterRate = 1
-        self.parameters.polygonalApproxAccuracyRate = 0.1
+        # self.parameters.maxMarkerPerimeterRate = 1
+        # self.parameters.polygonalApproxAccuracyRate = 0.1
         # Create an ArucoDetector object with the predefined dictionary and custom parameters
         self.detector = cv.aruco.ArucoDetector(self.dictionary, self.parameters)
 
@@ -269,8 +272,9 @@ class PuckDetector:
 
 def main():
     # Initialize the video capture object to capture video from the default camera (camera 0)
-    cap = cv.VideoCapture(4)
-    # cap.set(12, 2)
+    stream = WebcamVideoStream(src=4).start()
+    fps = FPS().start()
+
     corrector = PerspectiveCorrector(TABLE_WIDTH, TABLE_HEIGHT)
     detector = PuckDetector()
     if ARDUINO_ENABLED:
@@ -278,100 +282,96 @@ def main():
     # Initialize the number of frames
     num_frames = 0
     previous_position = None
+    frame = None
 
     while True:
         # Capture a frame from the camera
-        ret, frame = cap.read()
-        width = cap.get(3)  # float `width`
-        height = cap.get(4)  # float `height`
+        if frame is None or not np.array_equal(frame, stream.read()):
+            frame = stream.read()
+            starttime = time.perf_counter()
+            if PERF_COUNTER_ENABLED:
+                print(f"frame read at {time.perf_counter()}")
+            # Converting the image to grayscale and then to binary
+            # frame = cv.threshold(cv.cvtColor(frame, cv.COLOR_BGR2GRAY), 127, 255, 0)
 
-        print("width, height:", width, height)
+            # Apply the perspective transformation to the captured frame
+            # resized_frame = imutils.resize(frame, width=640)
+            corrected_frame = corrector.correct_frame(frame)
 
-        fps = cap.get(5)
-
-        print("fps:", fps)  # float `fps`
-        starttime = time.perf_counter()
-        if PERF_COUNTER_ENABLED:
-            print(f"frame read at {time.perf_counter()}")
-        # Converting the image to grayscale and then to binary
-        # frame = cv.threshold(cv.cvtColor(frame, cv.COLOR_BGR2GRAY), 127, 255, 0)
-
-        # Check if the frame was successfully captured
-        if not ret:
-            print("Failed to grab frame")
-            break  # Exit the loop if frame capture failed
-        # Apply the perspective transformation to the captured frame
-        resized_frame = cv.resize(frame, (int(TABLE_WIDTH / 4), int(TABLE_HEIGHT / 4)))
-        corrected_frame = corrector.correct_frame(frame)
-
-        if PERF_COUNTER_ENABLED:
-            print(f"frame corrected at {time.perf_counter() - starttime}")
-        if corrected_frame is not None:
-            # Display the result of the perspective transformation
-            detect_result = detector.detect_puck(corrected_frame, starttime)
-            if detect_result is not None:
-                detected_frame, latest_position = detect_result
-                if detected_frame is not None:
-                    # resize = cv.resize(
-                    #    detected_frame,
-                    #    (int(TABLE_WIDTH / 4), int(TABLE_HEIGHT / 4)),
-                    # )
-                    resize = resized_frame
-                    if latest_position is not None:
-                        print(
-                            f"latest puck position: {latest_position.x, latest_position.y}"
-                        )
-                        if previous_position is not None:
-                            if TRAJECTORY_PREDICT:
-                                y_int, x3, y3 = y_int_predict(
-                                    previous_position,
-                                    latest_position,
-                                )
-
-                                if DRAW_ENABLED:
-                                    if x3 is not None and y3 is not None:
-                                        resize = cv.arrowedLine(
-                                            resize,
-                                            (
-                                                int(latest_position.x / 4),
-                                                int(latest_position.y / 4),
-                                            ),
-                                            (int(x3 / 4), int(y3 / 4)),
-                                            (255, 0, 0),
-                                            10,
-                                        )
-                                    resize = cv.circle(
-                                        resize,
-                                        (
-                                            int((HITTING_POSITION) * 100 / 4),
-                                            int((y_int) / 4),
-                                        ),
-                                        25,
-                                        (0, 0, 255),
-                                        3,
+            if PERF_COUNTER_ENABLED:
+                print(f"frame corrected at {time.perf_counter() - starttime}")
+            if corrected_frame is not None:
+                # Display the result of the perspective transformation
+                detect_result = detector.detect_puck(corrected_frame, starttime)
+                if detect_result is not None:
+                    detected_frame, latest_position = detect_result
+                    if detected_frame is not None:
+                        if latest_position is not None:
+                            print(
+                                f"latest puck position: {latest_position.x, latest_position.y}"
+                            )
+                            if previous_position is not None:
+                                if TRAJECTORY_PREDICT:
+                                    y_int, x3, y3 = y_int_predict(
+                                        previous_position,
+                                        latest_position,
                                     )
-                                if ARDUINO_ENABLED:
-                                    send_coordinates_to_arduino(y_int, arduino)
 
-                        previous_position = latest_position
-                    if PERF_COUNTER_ENABLED:
-                        print(f"frame show at {time.perf_counter() - starttime}")
-                    cv.imshow("Perspective Transform", resize)
+                                    if DRAW_ENABLED:
+                                        if x3 is not None and y3 is not None:
+                                            corrected_frame = cv.arrowedLine(
+                                                corrected_frame,
+                                                (
+                                                    int(latest_position.x),
+                                                    int(latest_position.y),
+                                                ),
+                                                (
+                                                    int(x3),
+                                                    int(y3),
+                                                ),
+                                                (255, 0, 0),
+                                                10,
+                                            )
+                                        corrected_frame = cv.circle(
+                                            corrected_frame,
+                                            (
+                                                int(HITTING_POSITION * PIXELS_PER_INCH),
+                                                int(y_int),
+                                            ),
+                                            25,
+                                            (0, 0, 255),
+                                            3,
+                                        )
+                                    if ARDUINO_ENABLED:
+                                        send_coordinates_to_arduino(y_int, arduino)
+                            if (
+                                previous_position is None
+                                or latest_position.x != previous_position.x
+                            ):
+                                previous_position = latest_position
+                        if PERF_COUNTER_ENABLED:
+                            print(f"frame show at {time.perf_counter() - starttime}")
+                        cv.imshow("Perspective Transform", corrected_frame)
 
-        num_frames += 1
+            num_frames += 1
+            fps.update()
 
-        # Display the original frame with the detected ArUco markers
-        cv.imshow("Frame", frame)
+            # Display the original frame with the detected ArUco markers
+            cv.imshow("Frame", frame)
 
         # Wait for a key press for 1 millisecond; exit if 'Esc' is pressed
         key = cv.waitKey(1)
         if key == 27:
             break
-        if key == ord("c"):
+        if key == ord("c") and frame is not None:
             corrector.calibrate(frame)
 
+    fps.stop()
+    print("[INFO] elasped time: {:.2f}".format(fps.elapsed()))
+    print("[INFO] approx. FPS: {:.2f}".format(fps.fps()))
+
     # Release the video capture object to free resources
-    cap.release()
+    # cap.release()
     # Destroy all OpenCV-created windows to free resources
     cv.destroyAllWindows()
 

@@ -38,11 +38,11 @@ void setup()
 
   stepper1.setStepsPerRevolution(1600 * 3);
   stepper1.setSpeedInRevolutionsPerSecond(5);
-  stepper1.setAccelerationInRevolutionsPerSecondPerSecond(1);
+  stepper1.setAccelerationInRevolutionsPerSecondPerSecond(2.5);
 
   stepper2.setStepsPerRevolution(1600 * 3);
   stepper2.setSpeedInRevolutionsPerSecond(5);
-  stepper2.setAccelerationInRevolutionsPerSecondPerSecond(1);
+  stepper2.setAccelerationInRevolutionsPerSecondPerSecond(2.5);
 
 #ifdef HOME
   if (stepper1.moveToHomeInRevolutions(1, 0.1, 10, LIMIT_SWITCH_PIN_1) != true)
