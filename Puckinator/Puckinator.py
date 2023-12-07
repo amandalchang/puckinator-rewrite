@@ -46,7 +46,7 @@ def send_coordinates_to_arduino(desired_y, arduino, desired_x=HITTING_POSITION):
     # )
 
 
-def y_int_predict(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
+def predict_trajectory(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
     """
     Args:
         prev_pos: an instance of TimedstampedPos
@@ -70,39 +70,46 @@ def y_int_predict(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
     based upon the direction and speed of the puck.
     """
     time_elapsed = latest_pos.timestamp - prev_pos.timestamp
-    x3 = None
-    y3 = None
+    dy = None
+    dx = None
+    intercept_time = None
 
     speed = (
         math.dist(
             prev_pos.pos_as_tuple(),
             latest_pos.pos_as_tuple(),
         )
-        / PIXELS_PER_INCH
     ) / time_elapsed
     if latest_pos.x != prev_pos.x:
-        m = (latest_pos.y - prev_pos.y) / (latest_pos.x - prev_pos.x)
+        dx = latest_pos.x - prev_pos.x
+        dy = latest_pos.y - prev_pos.y
         # Calculate the y-intercept
-        b = prev_pos.y - m * prev_pos.x
+        b = prev_pos.y - dy / dx * prev_pos.x
         # Calculate the end point of the line
-        x3 = latest_pos.x + (latest_pos.x - prev_pos.x)
-        y3 = m * x3 + b
-        y_int = m * (intersect_x * PIXELS_PER_INCH) + b
+        # x3 = latest_pos.x + (latest_pos.x - prev_pos.x)
+        # y3 = m * x3 + b
+        y_int = dy / dx * (intersect_x * PIXELS_PER_INCH) + b
         print("different X values :)")
+        intercept_time = (
+            latest_pos.timestamp
+            + math.dist(latest_pos.pos_as_tuple(), (intersect_x, y_int)) / speed
+        )
     else:
         # This is a special case where the line is vertical
         # print("the line is vertical")
         y_int = latest_pos.y
 
     # print(f"speed: {speed}")
-    if speed < SPEED_THRESHOLD:
+
+    if (speed / PIXELS_PER_INCH) < SPEED_THRESHOLD or (latest_pos.x - prev_pos.x > 0):
         y_int = latest_pos.y
 
     y_int = min(
         456, max(y_int, 43)
     )  # clamp Y position to safe values within the bounds of the table
-
-    return y_int, x3, y3
+    if dy is None or dx is None or intercept_time is None:
+        return None
+    return TrajectoryPrediction(intersect_x, y_int, dx, dy, intercept_time)
 
 
 def coordinateconverter(cY, cX, arm_length, displacement):
@@ -146,8 +153,8 @@ class TimestampedPos:
     This is in terms of OpenCV coordinates in pixels and timestamp is in seconds
     """
 
-    x: float
-    y: float
+    x: float  # pixels
+    y: float  # pixels
     timestamp: float
 
     def pos_as_tuple(self):
@@ -155,16 +162,16 @@ class TimestampedPos:
 
 
 @dataclass
-class PuckVector:
+class TrajectoryPrediction:
     """
     This is in terms of OpenCV coordinates in pixels and speed is in inches/second
     """
 
-    end_x: int
-    end_y: int
-    m: float
-    b: float
-    speed: float
+    x_int: float  # Inches
+    y_int: float  # Inches
+    vx: float  # pixels
+    vy: float  # pixels
+    int_time: float  # in seconds
 
 
 class PerspectiveCorrector:
@@ -238,7 +245,7 @@ class PuckDetector:
         # Create an instance of DetectorParameters for configuring ArUco detection
         self.parameters = cv.aruco.DetectorParameters()
         # self.parameters.maxMarkerPerimeterRate = 1
-        # self.parameters.polygonalApproxAccuracyRate = 0.1
+        self.parameters.polygonalApproxAccuracyRate = 0.1
         # Create an ArucoDetector object with the predefined dictionary and custom parameters
         self.detector = cv.aruco.ArucoDetector(self.dictionary, self.parameters)
 
@@ -283,6 +290,7 @@ def main():
     num_frames = 0
     previous_position = None
     frame = None
+    last_trajectory = None
 
     while True:
         # Capture a frame from the camera
@@ -311,39 +319,42 @@ def main():
                                 f"latest puck position: {latest_position.x, latest_position.y}"
                             )
                             if previous_position is not None:
-                                if TRAJECTORY_PREDICT:
-                                    y_int, x3, y3 = y_int_predict(
+                                if latest_position.x > TABLE_WIDTH / 3:
+                                    last_trajectory = predict_trajectory(
                                         previous_position,
                                         latest_position,
                                     )
-
-                                    if DRAW_ENABLED:
-                                        if x3 is not None and y3 is not None:
-                                            corrected_frame = cv.arrowedLine(
-                                                corrected_frame,
-                                                (
-                                                    int(latest_position.x),
-                                                    int(latest_position.y),
-                                                ),
-                                                (
-                                                    int(x3),
-                                                    int(y3),
-                                                ),
-                                                (255, 0, 0),
-                                                10,
-                                            )
-                                        corrected_frame = cv.circle(
+                                    if DRAW_ENABLED and last_trajectory is not None:
+                                        corrected_frame = cv.arrowedLine(
                                             corrected_frame,
                                             (
-                                                int(HITTING_POSITION * PIXELS_PER_INCH),
-                                                int(y_int),
+                                                int(latest_position.x),
+                                                int(latest_position.y),
                                             ),
-                                            25,
-                                            (0, 0, 255),
-                                            3,
+                                            (
+                                                int(
+                                                    latest_position.x
+                                                    + last_trajectory.vx * 5
+                                                ),
+                                                int(
+                                                    latest_position.y
+                                                    + last_trajectory.vy * 5
+                                                ),
+                                            ),
+                                            (255, 0, 0),
+                                            10,
                                         )
-                                    if ARDUINO_ENABLED:
-                                        send_coordinates_to_arduino(y_int, arduino)
+                                else:
+                                    print("im on the other side")
+                                    # calculate_offensive(
+                                    #     last_trajectory
+                                    # )  # Potentially check if most recent trajectory is recent enough
+
+                                if ARDUINO_ENABLED and last_trajectory is not None:
+                                    send_coordinates_to_arduino(
+                                        last_trajectory.y_int, arduino
+                                    )
+
                             if (
                                 previous_position is None
                                 or latest_position.x != previous_position.x
@@ -351,6 +362,17 @@ def main():
                                 previous_position = latest_position
                         if PERF_COUNTER_ENABLED:
                             print(f"frame show at {time.perf_counter() - starttime}")
+                        if DRAW_ENABLED and last_trajectory is not None:
+                            corrected_frame = cv.circle(
+                                corrected_frame,
+                                (
+                                    int(HITTING_POSITION * PIXELS_PER_INCH),
+                                    int(last_trajectory.y_int),
+                                ),
+                                25,
+                                (0, 0, 255),
+                                3,
+                            )
                         cv.imshow("Perspective Transform", corrected_frame)
 
             num_frames += 1

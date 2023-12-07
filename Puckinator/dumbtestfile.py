@@ -1,5 +1,5 @@
 import math
-from Puckinator.puckinator import (
+from Puckinator.Puckinator import (
     coordinateconverter,
     HITTING_POSITION,
     ARM_LENGTH,
