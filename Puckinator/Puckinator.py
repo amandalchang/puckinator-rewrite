@@ -16,15 +16,46 @@ ARM_LENGTH = 8.0  # arm legnth in inches
 DISPLACEMENT = 5.0  # distance between motors in inches
 SPEED_THRESHOLD = 5.0  # inches per second
 
+
+TOP_BOUNCE_Y = 44.25
+BOTTOM_BOUNCE_Y = 457
 WAITING_POSITION = 4.0
 HITTING_POSITION = 7.0  # x-direction inches from the upper left corner
 X_OFFSET = 4  # inches coordinate converter is offset from the upper left corner of the upper left ArUco
-Y_OFFSET = 7.75  # inches coordinate converter offset from the upper left corner of the upper left ArUco
+Y_OFFSET = 7.90  # inches coordinate converter offset from the upper left corner of the upper left ArUco
 
 ARDUINO_ENABLED = True  # disable arduino comms for debugging
 DRAW_ENABLED = True  # disable arrow and circle drawing to fix latency
 TRAJECTORY_PREDICT = True  # disable trajectory prediction to optimize latency
+BOUNCE_PREDICT = True
 PERF_COUNTER_ENABLED = False  # disable perf_counter for less print statements
+
+
+@dataclass
+class TimestampedPos:
+    """
+    This is in terms of OpenCV coordinates in pixels and timestamp is in seconds
+    """
+
+    x: float  # pixels
+    y: float  # pixels
+    timestamp: float
+
+    def pos_as_tuple(self):
+        return (self.x, self.y)
+
+
+@dataclass
+class TrajectoryPrediction:
+    """
+    This is in terms of OpenCV coordinates in pixels and speed is in inches/second
+    """
+
+    x_int: float  # Inches
+    y_int: float  # Inches
+    vx: float  # pixels
+    vy: float  # pixels
+    int_time: float  # in seconds
 
 
 def send_coordinates_to_arduino(desired_y, arduino, desired_x=HITTING_POSITION):
@@ -46,32 +77,35 @@ def send_coordinates_to_arduino(desired_y, arduino, desired_x=HITTING_POSITION):
     # )
 
 
-def predict_trajectory(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
+def predict_trajectory(
+    prev_pos: TimestampedPos, latest_pos: TimestampedPos, intersect_x=HITTING_POSITION
+):
     """
-    Args:
-        prev_pos: an instance of TimedstampedPos
-        latest_pos: an instance of TimedstampedPos
-        intersect_x: the x position represented by a float of the predicted
-            spot for the puck
-    Returns:
-        y_int: a float representing the y-value of the predicted position
-            of the puck at a given x
-        x3: a float representing the x value of the endpoint of the velocity
-            vector
-        y3: a float representing the y value of the endpoint of the velocity
-            vector
+    Predicts the trajectory of the puck based on previous and latest positions.
 
-    This function draws a vector to show the predicted direction of the puck
-    and outputs the y-intersect. If the y-intersect is predicted to be beyond
-    the edges of the table, the function sets it to the closest limit of the
-    table. If the vector is vertical or the speed is lower than the speed
-    threshold, y_int matches the y-position of the puck. It also outputs x3 and
-    y3, which represent the endpoint of a predictive velocity vector drawn
-    based upon the direction and speed of the puck.
+    This function calculates the speed of the puck based on the distance between
+    the previous and latest positions and the time elapsed. It then calculates
+    the y-intercept and the endpoint of the velocity vector. If the y-intercept
+    is predicted to be beyond the edges of the table, it is set to the closest
+    limit of the table. If the vector is vertical or the speed is lower than
+    the speed threshold, the y-intercept matches the y-position of the puck.
+
+    Args:
+        prev_pos (TimedstampedPos): The previous position of the puck.
+        latest_pos (TimedstampedPos): The latest position of the puck.
+        intersect_x (float, optional): The x position of the predicted spot
+            for the puck. Defaults to HITTING_POSITION.
+
+    Returns:
+        TrajectoryPrediction: An instance of TrajectoryPrediction containing
+        the predicted x and y values of the puck, the dx and dy values, and
+        the intercept time. If the dy, dx, or intercept_time is None, the
+        function returns None.
     """
     time_elapsed = latest_pos.timestamp - prev_pos.timestamp
     dy = None
     dx = None
+    b = None
     intercept_time = None
 
     speed = (
@@ -89,10 +123,13 @@ def predict_trajectory(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
         # x3 = latest_pos.x + (latest_pos.x - prev_pos.x)
         # y3 = m * x3 + b
         y_int = dy / dx * (intersect_x * PIXELS_PER_INCH) + b
-        print("different X values :)")
+        # print("different X values :)")
         intercept_time = (
             latest_pos.timestamp
-            + math.dist(latest_pos.pos_as_tuple(), (intersect_x, y_int)) / speed
+            + math.dist(
+                latest_pos.pos_as_tuple(), (intersect_x * PIXELS_PER_INCH, y_int)
+            )
+            / speed
         )
     else:
         # This is a special case where the line is vertical
@@ -104,12 +141,53 @@ def predict_trajectory(prev_pos, latest_pos, intersect_x=HITTING_POSITION):
     if (speed / PIXELS_PER_INCH) < SPEED_THRESHOLD or (latest_pos.x - prev_pos.x > 0):
         y_int = latest_pos.y
 
-    y_int = min(
-        456, max(y_int, 43)
-    )  # clamp Y position to safe values within the bounds of the table
-    if dy is None or dx is None or intercept_time is None:
+    if dy is None or dx is None or intercept_time is None or b is None:
         return None
-    return TrajectoryPrediction(intersect_x, y_int, dx, dy, intercept_time)
+
+    m = dy / dx
+    latest_m = m
+    latest_b = b
+    i = 0
+
+    puck_points: list[tuple] = [(int(latest_pos.x), int(latest_pos.y))]
+    if (speed / PIXELS_PER_INCH) > SPEED_THRESHOLD and (latest_pos.x - prev_pos.x < 0):
+        print(f"initial y int: {y_int}")
+        if BOUNCE_PREDICT:
+            while y_int > BOTTOM_BOUNCE_Y or y_int < TOP_BOUNCE_Y:
+                i = i + 1
+                print(f"Calculating bounce number {i}")
+                if i > 2:
+                    y_int = latest_pos.y
+                    puck_points: list[tuple] = [(int(latest_pos.x), int(latest_pos.y))]
+                    break
+                (latest_m, latest_b), bounce_pos = predict_next_bounce(
+                    latest_m, latest_b
+                )
+                print(f"Bounce at {bounce_pos}")
+                puck_points.append(bounce_pos)
+                print(f"Calculated Y intercept: {y_int}")
+                y_int = latest_m * (intersect_x * PIXELS_PER_INCH) + latest_b
+    y_int = min(BOTTOM_BOUNCE_Y, max(TOP_BOUNCE_Y, y_int))
+    puck_points.append((int(intersect_x * PIXELS_PER_INCH), int(y_int)))
+
+    return (
+        TrajectoryPrediction(intersect_x, y_int, dx, dy, intercept_time),
+        puck_points,
+    )
+
+
+def predict_next_bounce(m, b):
+    if m == 0:
+        m = 0.0001
+    if m > 0:
+        y1 = TOP_BOUNCE_Y
+    else:
+        y1 = BOTTOM_BOUNCE_Y
+
+    x1 = (y1 - b) / m
+    bounce_m = -1 * m
+    c = y1 + (-bounce_m) * x1
+    return ((bounce_m, c), (int(x1), int(y1)))
 
 
 def coordinateconverter(cY, cX, arm_length, displacement):
@@ -145,33 +223,6 @@ def coordinateconverter(cY, cX, arm_length, displacement):
     )
 
     return (theta, phi)
-
-
-@dataclass
-class TimestampedPos:
-    """
-    This is in terms of OpenCV coordinates in pixels and timestamp is in seconds
-    """
-
-    x: float  # pixels
-    y: float  # pixels
-    timestamp: float
-
-    def pos_as_tuple(self):
-        return (self.x, self.y)
-
-
-@dataclass
-class TrajectoryPrediction:
-    """
-    This is in terms of OpenCV coordinates in pixels and speed is in inches/second
-    """
-
-    x_int: float  # Inches
-    y_int: float  # Inches
-    vx: float  # pixels
-    vy: float  # pixels
-    int_time: float  # in seconds
 
 
 class PerspectiveCorrector:
@@ -284,6 +335,7 @@ def main():
 
     corrector = PerspectiveCorrector(TABLE_WIDTH, TABLE_HEIGHT)
     detector = PuckDetector()
+    input("Take the striker off or else it will explode")
     if ARDUINO_ENABLED:
         arduino = serial.Serial(port="/dev/ttyACM0", baudrate=115200, write_timeout=0.1)
     # Initialize the number of frames
@@ -320,30 +372,32 @@ def main():
                             )
                             if previous_position is not None:
                                 if latest_position.x > TABLE_WIDTH / 3:
-                                    last_trajectory = predict_trajectory(
+                                    result = predict_trajectory(
                                         previous_position,
                                         latest_position,
                                     )
-                                    if DRAW_ENABLED and last_trajectory is not None:
-                                        corrected_frame = cv.arrowedLine(
-                                            corrected_frame,
-                                            (
-                                                int(latest_position.x),
-                                                int(latest_position.y),
-                                            ),
-                                            (
-                                                int(
-                                                    latest_position.x
-                                                    + last_trajectory.vx * 5
-                                                ),
-                                                int(
-                                                    latest_position.y
-                                                    + last_trajectory.vy * 5
-                                                ),
-                                            ),
-                                            (255, 0, 0),
-                                            10,
-                                        )
+                                    if result is not None:
+                                        last_trajectory, puck_points = result
+                                        if DRAW_ENABLED:
+                                            print(puck_points)
+                                            # Define the color, thickness and tipLength
+                                            color = (255, 0, 0)  # Red color in BGR
+                                            thickness = 2
+                                            tipLength = 0.1
+
+                                            # Draw arrowed lines between all pairs of points
+                                            for i, start_point in enumerate(
+                                                puck_points[:-1]
+                                            ):
+                                                end_point = puck_points[i + 1]
+                                                corrected_frame = cv.arrowedLine(
+                                                    detected_frame,
+                                                    start_point,
+                                                    end_point,
+                                                    color,
+                                                    thickness,
+                                                    tipLength=tipLength,
+                                                )
                                 else:
                                     print("im on the other side")
                                     # calculate_offensive(

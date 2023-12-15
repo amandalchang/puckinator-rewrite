@@ -28,8 +28,10 @@ const unsigned int MAX_INPUT = 50;
 
 void setup()
 {
+  pinMode(2, INPUT_PULLUP);
   // put your setup code here, to run once:
-  attachInterrupt(0, Estop, RISING); // attach interupt to pin 2 (0 parameter)
+  delay(1000);
+  //attachInterrupt(0, Estop, FALLING); // attach interupt to pin 2 (0 parameter)
 
   stepper1.connectToPins(MOTOR_STEP_PIN1, MOTOR_DIRECTION_PIN1);
   stepper2.connectToPins(MOTOR_STEP_PIN2, MOTOR_DIRECTION_PIN2);
@@ -38,11 +40,11 @@ void setup()
 
   stepper1.setStepsPerRevolution(1600 * 3);
   stepper1.setSpeedInRevolutionsPerSecond(5);
-  stepper1.setAccelerationInRevolutionsPerSecondPerSecond(2.5);
+  stepper1.setAccelerationInRevolutionsPerSecondPerSecond(5);
 
   stepper2.setStepsPerRevolution(1600 * 3);
   stepper2.setSpeedInRevolutionsPerSecond(5);
-  stepper2.setAccelerationInRevolutionsPerSecondPerSecond(2.5);
+  stepper2.setAccelerationInRevolutionsPerSecondPerSecond(5);
 
 #ifdef HOME
   if (stepper1.moveToHomeInRevolutions(1, 0.1, 10, LIMIT_SWITCH_PIN_1) != true)
@@ -66,11 +68,13 @@ void setup()
     }
   }
   else
-  {
+  {stepper1.setAccelerationInRevolutionsPerSecondPerSecond(2.5);
     stepper2.setCurrentPositionInRevolutions(-0.355);
     stepper2.setTargetPositionInRevolutions(0);
   }
 #endif
+  //stepper1.setAccelerationInRevolutionsPerSecondPerSecond(5);
+  //stepper2.setAccelerationInRevolutionsPerSecondPerSecond(5);
 }
 
 // here to process incoming serial data after a terminator received
