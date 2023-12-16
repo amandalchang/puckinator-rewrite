@@ -86,9 +86,10 @@ def predict_trajectory(
     This function calculates the speed of the puck based on the distance between
     the previous and latest positions and the time elapsed. It then calculates
     the y-intercept and the endpoint of the velocity vector. If the y-intercept
-    is predicted to be beyond the edges of the table, it is set to the closest
-    limit of the table. If the vector is vertical or the speed is lower than
-    the speed threshold, the y-intercept matches the y-position of the puck.
+    is predicted to be beyond the edges of the table, it runs a bounce
+    prediction algorithm until it is predicted to be within the table. If the 
+    vector is vertical or the speed is lower than the speed threshold, the 
+    y-intercept matches the y-position of the puck.
 
     Args:
         prev_pos (TimedstampedPos): The previous position of the puck.
