@@ -23,6 +23,7 @@ WAITING_POSITION = 4.0
 HITTING_POSITION = 7.0  # x-direction inches from the upper left corner
 X_OFFSET = 4  # inches coordinate converter is offset from the upper left corner of the upper left ArUco
 Y_OFFSET = 7.90  # inches coordinate converter offset from the upper left corner of the upper left ArUco
+PORT = "/dev/ttyACM0"
 
 ARDUINO_ENABLED = True  # disable arduino comms for debugging
 DRAW_ENABLED = True  # disable arrow and circle drawing to fix latency
@@ -444,7 +445,7 @@ def main():
     detector = PuckDetector()
     input("Take the striker off or else it will explode")
     if ARDUINO_ENABLED:
-        arduino = serial.Serial(port="/dev/ttyACM0", baudrate=115200, write_timeout=0.1)
+        arduino = serial.Serial(port=PORT, baudrate=115200, write_timeout=0.1)
     # Initialize the number of frames
     num_frames = 0
     previous_position = None
