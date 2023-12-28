@@ -6,8 +6,7 @@ defend an air hockey goal.
 
 ## Website Link
 Detailed documentation on the design, creation and implementation of our
-project can be found on our project website [here]().
-*** INSERT WEBSITE LINK ***
+project can be found on our project website [here](https://meaganlipsman.github.io/pie-2023-03/puckinator/index.html).
 
 ## In Action
 Watch a short video of our design process [here](https://www.youtube.com/watch?v=9_xLwALPo-s)!
