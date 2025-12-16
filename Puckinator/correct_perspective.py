@@ -3,9 +3,9 @@ import cv2 as cv
 import numpy as np
 
 # Constants
-CALIB_FRAME = 0 # Number of frames grabbed
-table_width = 2200
-table_height = 800
+CALIB_FRAME = 10  # Number of frames grabbed
+table_width = 3925
+table_height = 1875
 
 
 class PerspectiveCorrector:
@@ -75,6 +75,7 @@ class PerspectiveCorrector:
 def main():
     # Initialize the video capture object to capture video from the default camera (camera 0)
     cap = cv.VideoCapture(0)
+    corrector = PerspectiveCorrector(3925, 1875)
 
     # Initialize the number of frames
     num_frames = 0
@@ -101,6 +102,8 @@ def main():
         key = cv.waitKey(1)
         if key == 27:
             break
+        if key == ord("c"):
+            corrector.calibrate(frame)
 
     # Release the video capture object to free resources
     cap.release()
